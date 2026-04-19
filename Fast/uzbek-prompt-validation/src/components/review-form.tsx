@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ReviewTranslationChoice } from "@prisma/client";
 import {
   EXTRA_FACTOR_OPTIONS,
   ExtraFactorDefinition,
@@ -11,12 +12,13 @@ import {
   REVIEW_INTENT_OPTIONS,
   REVIEW_NATURALNESS_OPTIONS,
   REVIEW_STRENGTH_OPTIONS,
+  REVIEW_TRANSLATION_CHOICE_OPTIONS,
 } from "@/lib/constants";
 import { PendingButton } from "@/components/pending-button";
 
 type ReviewFormProps = {
   assignmentId: string;
-  initialEditedUzbekPrompt: string;
+  initialUzbekPrompt: string;
   extraFactors: ExtraFactorDefinition[];
   action: (formData: FormData) => void;
 };
@@ -25,14 +27,15 @@ type DraftState = Record<string, string>;
 
 export function ReviewForm({
   assignmentId,
-  initialEditedUzbekPrompt,
+  initialUzbekPrompt,
   extraFactors,
   action,
 }: ReviewFormProps) {
   const storageKey = useMemo(() => `review-draft:${assignmentId}`, [assignmentId]);
   const [draft, setDraft] = useState<DraftState>(() => {
     const initialDraft = {
-      editedUzbekPrompt: initialEditedUzbekPrompt,
+      translationChoice: "",
+      editedUzbekPrompt: initialUzbekPrompt,
       notes: "",
     };
 
@@ -55,6 +58,8 @@ export function ReviewForm({
       return initialDraft;
     }
   });
+  const isEditing = draft.translationChoice === ReviewTranslationChoice.EDIT_TRANSLATION;
+  const isKeepingMt = draft.translationChoice === ReviewTranslationChoice.KEEP_MT;
 
   useEffect(() => {
     window.localStorage.setItem(storageKey, JSON.stringify(draft));
@@ -64,21 +69,84 @@ export function ReviewForm({
     <form action={action} className="space-y-6">
       <input type="hidden" name="assignmentId" value={assignmentId} />
 
-      <div className="space-y-2">
-        <label className="text-sm font-semibold text-slate-700" htmlFor="editedUzbekPrompt">
-          Edited Uzbek translation
-        </label>
-        <textarea
-          id="editedUzbekPrompt"
-          name="editedUzbekPrompt"
-          required
-          rows={7}
-          value={draft.editedUzbekPrompt ?? ""}
-          onChange={(event) =>
-            setDraft((current) => ({ ...current, editedUzbekPrompt: event.target.value }))
-          }
-          className="w-full rounded-3xl border border-slate-300 bg-white px-4 py-3 text-sm leading-7 outline-none transition focus:border-slate-900"
-        />
+      <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-slate-900">Reviewed Uzbek text</p>
+          <p className="text-sm leading-6 text-slate-600">
+            Choose whether to keep the MT Uzbek prompt as-is or submit an edited Uzbek version.
+          </p>
+        </div>
+
+        <div className="grid gap-3">
+          {REVIEW_TRANSLATION_CHOICE_OPTIONS.map((option) => {
+            const checked = draft.translationChoice === option.value;
+
+            return (
+              <label
+                key={option.value}
+                className={`cursor-pointer rounded-3xl border px-4 py-4 transition ${
+                  checked
+                    ? "border-slate-900 bg-white shadow-sm"
+                    : "border-slate-200 bg-white/70 hover:border-slate-300"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="translationChoice"
+                  value={option.value}
+                  required
+                  checked={checked}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      translationChoice: event.target.value,
+                    }))
+                  }
+                  className="sr-only"
+                />
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{option.label}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">{option.description}</p>
+                  </div>
+                  <span
+                    className={`mt-0.5 h-4 w-4 rounded-full border ${
+                      checked ? "border-slate-900 bg-slate-900" : "border-slate-300 bg-white"
+                    }`}
+                  />
+                </div>
+              </label>
+            );
+          })}
+        </div>
+
+        {isKeepingMt ? (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-slate-700">Final Uzbek text</p>
+            <p className="whitespace-pre-wrap rounded-3xl border border-slate-200 bg-white p-4 text-sm leading-7 text-slate-700">
+              {initialUzbekPrompt}
+            </p>
+          </div>
+        ) : null}
+
+        {isEditing ? (
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-slate-700" htmlFor="editedUzbekPrompt">
+              Edited Uzbek translation
+            </label>
+            <textarea
+              id="editedUzbekPrompt"
+              name="editedUzbekPrompt"
+              required={isEditing}
+              rows={7}
+              value={draft.editedUzbekPrompt ?? ""}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, editedUzbekPrompt: event.target.value }))
+              }
+              className="w-full rounded-3xl border border-slate-300 bg-white px-4 py-3 text-sm leading-7 outline-none transition focus:border-slate-900"
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -175,7 +243,9 @@ export function ReviewForm({
       </div>
 
       <div className="flex items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white p-4">
-        <p className="text-sm text-slate-500">Drafts autosave locally for this assignment.</p>
+        <p className="text-sm text-slate-500">
+          Translation choice, draft text, and rubric answers autosave locally for this assignment.
+        </p>
         <PendingButton>Submit review</PendingButton>
       </div>
     </form>

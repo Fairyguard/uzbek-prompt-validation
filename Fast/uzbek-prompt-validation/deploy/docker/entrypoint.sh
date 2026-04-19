@@ -21,7 +21,7 @@ if [ ! -f "$SQLITE_PATH" ]; then
   DB_WAS_MISSING="true"
 fi
 
-pnpm db:init
+pnpm db:sync
 
 if [ "${SEED_DEMO_DATA:-false}" = "true" ] && [ "$DB_WAS_MISSING" = "true" ]; then
   pnpm db:seed

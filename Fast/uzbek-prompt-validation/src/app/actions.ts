@@ -13,6 +13,7 @@ import {
   ReviewMeaningDrift,
   ReviewNaturalness,
   ReviewStrengthOfRequest,
+  ReviewTranslationChoice,
   RoleName,
   SpotCheckAction,
   TaskType,
@@ -564,7 +565,9 @@ export async function submitReviewAction(formData: FormData) {
 
   try {
     const assignmentId = z.string().min(1).parse(formData.get("assignmentId"));
-    const editedUzbekPrompt = z.string().min(2).parse(formData.get("editedUzbekPrompt"));
+    const translationChoice = z.nativeEnum(ReviewTranslationChoice).parse(
+      formData.get("translationChoice"),
+    );
     const intentMatchesOriginal = z.nativeEnum(ReviewIntentMatch).parse(
       formData.get("intentMatchesOriginal"),
     );
@@ -608,6 +611,10 @@ export async function submitReviewAction(formData: FormData) {
       const extraFactors = assignment.prompt.dataset.settings?.extraSafetyFactors
         ? (JSON.parse(assignment.prompt.dataset.settings.extraSafetyFactors) as ExtraFactorDefinition[])
         : [];
+      const editedUzbekPrompt =
+        translationChoice === ReviewTranslationChoice.KEEP_MT
+          ? assignment.prompt.mtUzbekPrompt.trim()
+          : z.string().min(2).parse(formData.get("editedUzbekPrompt")).trim();
       const extraFactorAnswers = Object.fromEntries(
         extraFactors.map((factor) => [
           factor.key,
@@ -621,6 +628,7 @@ export async function submitReviewAction(formData: FormData) {
           promptId: assignment.promptId,
           reviewerId: session.user.id,
           originalMtUzbekPrompt: assignment.prompt.mtUzbekPrompt,
+          translationChoice,
           editedUzbekPrompt,
           intentMatchesOriginal,
           harmCategoryMatches,

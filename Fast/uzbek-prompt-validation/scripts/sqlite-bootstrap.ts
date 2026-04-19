@@ -90,3 +90,54 @@ export function bootstrapSqliteSchema(sqlitePath: string) {
     fs.rmSync(tempFile, { force: true });
   }
 }
+
+export function syncSqliteSchema(databaseUrl: string) {
+  const sqlitePath = resolveSqlitePath(databaseUrl);
+  fs.mkdirSync(path.dirname(sqlitePath), { recursive: true });
+  const resolvedDatabaseUrl =
+    process.platform === "win32"
+      ? `file:${sqlitePath.replace(/\\/g, "/")}`
+      : `file:${sqlitePath}`;
+
+  const sql = runPrisma(
+    fs.existsSync(sqlitePath)
+      ? [
+          "migrate",
+          "diff",
+          "--from-url",
+          resolvedDatabaseUrl,
+          "--to-schema-datamodel",
+          "prisma/schema.prisma",
+          "--script",
+        ]
+      : [
+          "migrate",
+          "diff",
+          "--from-empty",
+          "--to-schema-datamodel",
+          "prisma/schema.prisma",
+          "--script",
+        ],
+  );
+
+  if (!sql.trim()) {
+    return {
+      sqlitePath,
+      changed: false,
+    };
+  }
+
+  const tempFile = path.join(os.tmpdir(), `uzbek-prompt-validation-sync-${Date.now()}.sql`);
+  fs.writeFileSync(tempFile, sql, "utf8");
+
+  try {
+    runPrisma(["db", "execute", "--file", tempFile, "--schema", "prisma/schema.prisma"]);
+  } finally {
+    fs.rmSync(tempFile, { force: true });
+  }
+
+  return {
+    sqlitePath,
+    changed: true,
+  };
+}

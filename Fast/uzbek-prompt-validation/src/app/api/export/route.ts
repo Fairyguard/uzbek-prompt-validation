@@ -75,6 +75,7 @@ export async function GET(request: Request) {
         reviewerId: review.reviewerId,
         reviewerEmail: review.reviewer.email,
         originalMtUzbekPrompt: review.originalMtUzbekPrompt,
+        translationChoice: review.translationChoice,
         editedUzbekPrompt: review.editedUzbekPrompt,
         intentMatchesOriginal: review.intentMatchesOriginal,
         harmCategoryMatches: review.harmCategoryMatches,

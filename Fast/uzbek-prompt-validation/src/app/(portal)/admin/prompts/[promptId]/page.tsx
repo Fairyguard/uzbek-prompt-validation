@@ -9,6 +9,7 @@ import {
 import { NoticeBanner } from "@/components/notice-banner";
 import { PendingButton } from "@/components/pending-button";
 import { StatusBadge } from "@/components/status-badge";
+import { REVIEW_TRANSLATION_CHOICE_LABELS } from "@/lib/constants";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/utils";
@@ -225,6 +226,9 @@ export default async function AdminPromptDetailPage({
                   <p className="font-semibold text-slate-900">{review.reviewer.name}</p>
                   <p className="text-sm text-slate-500">{review.finalDecision}</p>
                 </div>
+                <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  {REVIEW_TRANSLATION_CHOICE_LABELS[review.translationChoice]}
+                </p>
                 <p className="mt-3 text-sm leading-7 text-slate-700">{review.editedUzbekPrompt}</p>
                 <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">
                   {review.intentMatchesOriginal} · {review.meaningClarity} · {review.naturalness} ·{" "}

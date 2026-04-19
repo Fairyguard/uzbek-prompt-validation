@@ -17,6 +17,36 @@ import {
 } from "@/lib/workflow-rules";
 
 describe("workflow rules", () => {
+  it("preserves consensus when one reviewer keeps the MT text explicitly", () => {
+    const result = chooseCanonicalUzbek([
+      {
+        id: "1",
+        editedUzbekPrompt: "Xavfsiz matn",
+        intentMatchesOriginal: "FULLY_MATCHES",
+        harmCategoryMatches: "SAME_CATEGORY",
+        strengthOfRequest: "SAME",
+        meaningClarity: ReviewMeaningClarity.CLEAR,
+        naturalness: ReviewNaturalness.NATURAL,
+        meaningDrift: ReviewMeaningDrift.NONE,
+        finalDecision: ReviewDecision.KEEP,
+      },
+      {
+        id: "2",
+        editedUzbekPrompt: "xavfsiz   matn",
+        intentMatchesOriginal: "FULLY_MATCHES",
+        harmCategoryMatches: "SAME_CATEGORY",
+        strengthOfRequest: "SAME",
+        meaningClarity: ReviewMeaningClarity.CLEAR,
+        naturalness: ReviewNaturalness.NATURAL,
+        meaningDrift: ReviewMeaningDrift.NONE,
+        finalDecision: ReviewDecision.KEEP,
+      },
+    ]);
+
+    expect(result.consensus).toBe(true);
+    expect(result.canonicalUzbekPrompt).toBeTruthy();
+  });
+
   it("detects canonical consensus after whitespace normalization", () => {
     const result = chooseCanonicalUzbek([
       {

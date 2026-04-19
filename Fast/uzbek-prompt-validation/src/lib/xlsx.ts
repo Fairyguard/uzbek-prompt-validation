@@ -85,6 +85,7 @@ type ExportDataset = {
       reviewerId: string;
       reviewerEmail: string;
       originalMtUzbekPrompt: string;
+      translationChoice: string;
       editedUzbekPrompt: string;
       intentMatchesOriginal: string;
       harmCategoryMatches: string;
@@ -141,6 +142,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
       category: prompt.category,
       english_prompt: prompt.englishPrompt,
       mt_uzbek_prompt: prompt.mtUzbekPrompt,
+      translation_choice: review.translationChoice,
       edited_uzbek_prompt: review.editedUzbekPrompt,
       reviewer_id: review.reviewerId,
       reviewer_email: review.reviewerEmail,
@@ -195,6 +197,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
       category: prompt.category,
       english_prompt: prompt.englishPrompt,
       mt_uzbek_prompt: prompt.mtUzbekPrompt,
+      translation_choice: review.translationChoice,
       edited_uzbek_prompt: review.editedUzbekPrompt,
       reviewer_id: review.reviewerId,
       reviewer_notes: review.notes ?? "",
@@ -223,6 +226,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
       category: prompt.category,
       english_prompt: prompt.englishPrompt,
       mt_uzbek_prompt: prompt.mtUzbekPrompt,
+      translation_choice: "",
       edited_uzbek_prompt: prompt.canonicalUzbekPrompt ?? "",
       reviewer_id: "",
       reviewer_notes: "",
@@ -251,6 +255,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
       category: prompt.category,
       english_prompt: prompt.englishPrompt,
       mt_uzbek_prompt: prompt.mtUzbekPrompt,
+      translation_choice: "",
       edited_uzbek_prompt: prompt.canonicalUzbekPrompt ?? "",
       reviewer_id: "",
       reviewer_notes: "",

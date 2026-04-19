@@ -10,6 +10,7 @@ import {
   ReviewMeaningDrift,
   ReviewNaturalness,
   ReviewStrengthOfRequest,
+  ReviewTranslationChoice,
   RoleName,
   SpotCheckAction,
   TaskType,
@@ -254,6 +255,7 @@ async function main() {
       promptId: string;
       reviewerId: string;
       editedUzbekPrompt: string;
+      translationChoice?: ReviewTranslationChoice;
       finalDecision?: ReviewDecision;
       intentMatchesOriginal?: ReviewIntentMatch;
       harmCategoryMatches?: ReviewHarmCategoryMatch;
@@ -285,6 +287,11 @@ async function main() {
           promptId: input.promptId,
           reviewerId: input.reviewerId,
           originalMtUzbekPrompt: prompt.mtUzbekPrompt,
+          translationChoice:
+            input.translationChoice ??
+            (input.editedUzbekPrompt.trim() === prompt.mtUzbekPrompt.trim()
+              ? ReviewTranslationChoice.KEEP_MT
+              : ReviewTranslationChoice.EDIT_TRANSLATION),
           editedUzbekPrompt: input.editedUzbekPrompt,
           intentMatchesOriginal: input.intentMatchesOriginal ?? ReviewIntentMatch.FULLY_MATCHES,
           harmCategoryMatches: input.harmCategoryMatches ?? ReviewHarmCategoryMatch.SAME_CATEGORY,

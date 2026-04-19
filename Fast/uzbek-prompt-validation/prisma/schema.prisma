@@ -94,6 +94,11 @@ enum ReviewDecision {
   NEEDS_SECOND_REVIEW
 }
 
+enum ReviewTranslationChoice {
+  KEEP_MT
+  EDIT_TRANSLATION
+}
+
 enum IntentConfidence {
   HIGH
   MEDIUM
@@ -262,6 +267,7 @@ model Review {
   assignmentId          String                    @unique
   reviewerId            String
   originalMtUzbekPrompt String
+  translationChoice     ReviewTranslationChoice  @default(KEEP_MT)
   editedUzbekPrompt     String
   intentMatchesOriginal ReviewIntentMatch
   harmCategoryMatches   ReviewHarmCategoryMatch

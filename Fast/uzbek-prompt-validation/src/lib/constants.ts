@@ -7,6 +7,7 @@ import {
   ReviewMeaningDrift,
   ReviewNaturalness,
   ReviewStrengthOfRequest,
+  ReviewTranslationChoice,
   RoleName,
   SpotCheckAction,
   TaskType,
@@ -92,6 +93,24 @@ export const REVIEW_DECISION_OPTIONS = [
   { value: ReviewDecision.REJECT, label: "Reject" },
   { value: ReviewDecision.NEEDS_SECOND_REVIEW, label: "Not sure / Needs second review" },
 ] as const;
+
+export const REVIEW_TRANSLATION_CHOICE_OPTIONS = [
+  {
+    value: ReviewTranslationChoice.KEEP_MT,
+    label: "Keep MT Uzbek",
+    description: "Use the machine-translated Uzbek as the final reviewed text.",
+  },
+  {
+    value: ReviewTranslationChoice.EDIT_TRANSLATION,
+    label: "Edit Uzbek",
+    description: "Revise the Uzbek text before submitting the review.",
+  },
+] as const;
+
+export const REVIEW_TRANSLATION_CHOICE_LABELS: Record<ReviewTranslationChoice, string> = {
+  KEEP_MT: "Kept MT Uzbek",
+  EDIT_TRANSLATION: "Edited Uzbek",
+};
 
 export const INTENT_CONFIDENCE_OPTIONS = [
   { value: IntentConfidence.HIGH, label: "High" },

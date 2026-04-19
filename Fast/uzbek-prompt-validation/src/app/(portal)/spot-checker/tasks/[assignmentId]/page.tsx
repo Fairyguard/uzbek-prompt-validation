@@ -2,10 +2,9 @@ import { notFound, redirect } from "next/navigation";
 import { AssignmentStatus, TaskType } from "@prisma/client";
 import { submitSpotCheckAction } from "@/app/actions";
 import { PendingButton } from "@/components/pending-button";
+import { INTENT_MATCH_LABELS, REVIEW_TRANSLATION_CHOICE_LABELS, SPOT_CHECK_ACTION_OPTIONS } from "@/lib/constants";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
-import { SPOT_CHECK_ACTION_OPTIONS } from "@/lib/constants";
-import { INTENT_MATCH_LABELS } from "@/lib/constants";
 import { safeJsonParse } from "@/lib/utils";
 
 type Params = Promise<{ assignmentId: string }>;
@@ -129,13 +128,16 @@ export default async function SpotCheckerTaskPage({
             <div className="mt-4 grid gap-4">
               {assignment.prompt.reviews.map((review) => (
                 <div key={review.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="font-semibold text-slate-900">{review.reviewer.name}</p>
-                    <p className="text-sm text-slate-500">{review.finalDecision}</p>
-                  </div>
-                  <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">
-                    {review.editedUzbekPrompt}
-                  </p>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="font-semibold text-slate-900">{review.reviewer.name}</p>
+                      <p className="text-sm text-slate-500">{review.finalDecision}</p>
+                    </div>
+                    <p className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      {REVIEW_TRANSLATION_CHOICE_LABELS[review.translationChoice]}
+                    </p>
+                    <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">
+                      {review.editedUzbekPrompt}
+                    </p>
                   <div className="mt-4 grid gap-2 text-xs uppercase tracking-[0.16em] text-slate-500 md:grid-cols-3">
                     <span>Intent: {review.intentMatchesOriginal}</span>
                     <span>Clarity: {review.meaningClarity}</span>

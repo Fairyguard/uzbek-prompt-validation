@@ -41,7 +41,24 @@ describe("xlsx helpers", () => {
           notSureFlag: false,
           createdAt: new Date(),
           updatedAt: new Date(),
-          reviews: [],
+          reviews: [
+            {
+              reviewerId: "reviewer-1",
+              reviewerEmail: "reviewer@example.com",
+              originalMtUzbekPrompt: "Uzbek mt",
+              translationChoice: "KEEP_MT",
+              editedUzbekPrompt: "Uzbek final",
+              intentMatchesOriginal: "FULLY_MATCHES",
+              harmCategoryMatches: "SAME_CATEGORY",
+              strengthOfRequest: "SAME",
+              meaningClarity: "CLEAR",
+              naturalness: "NATURAL",
+              meaningDrift: "NONE",
+              finalDecision: "KEEP",
+              notes: null,
+              createdAt: new Date(),
+            },
+          ],
           intentChecks: [],
           spotChecks: [],
         },
@@ -52,5 +69,11 @@ describe("xlsx helpers", () => {
 
     expect(workbook.SheetNames).toContain("prompt_summary");
     expect(workbook.SheetNames).toContain("flat_annotations");
+    const reviewSheet = XLSX.utils.sheet_to_json<Record<string, string>>(
+      workbook.Sheets.reviews,
+      { defval: "" },
+    );
+
+    expect(reviewSheet[0]?.translation_choice).toBe("KEEP_MT");
   });
 });

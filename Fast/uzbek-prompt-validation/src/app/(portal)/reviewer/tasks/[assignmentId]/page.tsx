@@ -81,7 +81,7 @@ export default async function ReviewerTaskPage({
         <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
           <ReviewForm
             assignmentId={assignment.id}
-            initialEditedUzbekPrompt={assignment.prompt.mtUzbekPrompt}
+            initialUzbekPrompt={assignment.prompt.mtUzbekPrompt}
             extraFactors={extraFactors}
             action={submitReviewAction}
           />
