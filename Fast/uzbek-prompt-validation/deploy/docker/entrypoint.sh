@@ -27,4 +27,4 @@ if [ "${SEED_DEMO_DATA:-false}" = "true" ] && [ "$DB_WAS_MISSING" = "true" ]; th
   pnpm db:seed
 fi
 
-exec pnpm start -- --hostname 0.0.0.0 --port "${PORT:-3000}"
+exec pnpm exec next start --hostname 0.0.0.0 --port "${PORT:-3000}"
