@@ -1,0 +1,12 @@
+.git
+.gitignore
+.next
+coverage
+node_modules
+test-results
+playwright-report
+pnpm-debug.log*
+.env
+.env.local
+.env.development
+prisma/dev.db

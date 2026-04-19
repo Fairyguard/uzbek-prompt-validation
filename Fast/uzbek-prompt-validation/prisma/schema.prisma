@@ -1,0 +1,335 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  ADMIN
+  REVIEWER
+  INTENT_CHECKER
+  SPOT_CHECKER
+}
+
+enum TaskType {
+  REVIEW
+  INTENT_CHECK
+  SPOT_CHECK
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PromptStatus {
+  PENDING_REVIEW
+  IN_REVIEW
+  REVIEWED
+  PENDING_INTENT_CHECK
+  IN_INTENT_CHECK
+  INTENT_CHECKED
+  PENDING_SPOT_CHECK
+  APPROVED
+  NEEDS_REVISION
+  REJECTED
+}
+
+enum FinalDecision {
+  APPROVED
+  NEEDS_REVISION
+  REJECTED
+}
+
+enum ReviewIntentMatch {
+  FULLY_MATCHES
+  PARTLY_MATCHES
+  DOES_NOT_MATCH
+  NOT_SURE
+}
+
+enum ReviewHarmCategoryMatch {
+  SAME_CATEGORY
+  DIFFERENT_CATEGORY
+  NOT_SURE
+}
+
+enum ReviewStrengthOfRequest {
+  SAME
+  SOFTER
+  STRONGER
+  NOT_SURE
+}
+
+enum ReviewMeaningClarity {
+  CLEAR
+  SOMEWHAT_UNCLEAR
+  UNCLEAR
+  NOT_SURE
+}
+
+enum ReviewNaturalness {
+  NATURAL
+  ACCEPTABLE_BUT_AWKWARD
+  UNNATURAL
+  NOT_SURE
+}
+
+enum ReviewMeaningDrift {
+  NONE
+  POSSIBLE_DRIFT
+  CLEAR_DRIFT
+  NOT_SURE
+}
+
+enum ReviewDecision {
+  KEEP
+  REVISE
+  REJECT
+  NEEDS_SECOND_REVIEW
+}
+
+enum IntentConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum IntentMatchStatus {
+  MATCH
+  PARTIAL_MATCH
+  MISMATCH
+  MANUAL_CHECK_NEEDED
+}
+
+enum SpotCheckAction {
+  APPROVE
+  SEND_BACK_FOR_REVISION
+  REJECT
+  FLAG_MEANING_DRIFT
+  FLAG_UNCLEAR_WORDING
+  FLAG_UNREALISTIC_UZBEK
+}
+
+model User {
+  id                 String       @id @default(cuid())
+  name               String
+  email              String       @unique
+  passwordHash       String
+  isActive           Boolean      @default(true)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  roles              UserRole[]
+  assignments        Assignment[] @relation("AssignmentUser")
+  assignedBy         Assignment[] @relation("AssignmentAdmin")
+  reviews            Review[]
+  intentChecks       IntentCheck[]
+  spotChecks         SpotCheck[]
+  auditLogs          AuditLog[]
+  createdDatasets    Dataset[]    @relation("DatasetCreator")
+  canonicalPrompts   Prompt[]     @relation("CanonicalSelector")
+}
+
+model Role {
+  id        String    @id @default(cuid())
+  name      RoleName  @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  users     UserRole[]
+}
+
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+}
+
+model Dataset {
+  id             String           @id @default(cuid())
+  name           String
+  description    String?
+  sourceFilename String?
+  createdById    String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  prompts        Prompt[]
+  settings       DatasetSettings?
+  auditLogs      AuditLog[]
+  createdBy      User?            @relation("DatasetCreator", fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+model DatasetSettings {
+  id                              String   @id @default(cuid())
+  datasetId                       String   @unique
+  reviewInstructions              String
+  requiredReviews                 Int      @default(2)
+  requiredIntentChecks            Int      @default(1)
+  randomSpotCheckPercentage       Int      @default(0)
+  lowConfidenceTriggersSpotCheck  Boolean  @default(true)
+  mismatchTriggersSpotCheck       Boolean  @default(true)
+  extraSafetyFactors              String?
+  optionalSafetyFactorsNote       String?
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
+  dataset                         Dataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+}
+
+model Prompt {
+  id                    String            @id @default(cuid())
+  datasetId             String
+  promptId              String
+  category              String
+  englishPrompt         String
+  mtUzbekPrompt         String
+  intendedIntent        String?
+  notes                 String?
+  status                PromptStatus      @default(PENDING_REVIEW)
+  finalDecision         FinalDecision?
+  requiredReviews       Int
+  requiredIntentChecks  Int
+  canonicalUzbekPrompt  String?
+  canonicalSelectedById String?
+  needsCanonicalSelection Boolean        @default(false)
+  intentMatchStatus     IntentMatchStatus?
+  randomSpotCheckSelected Boolean        @default(false)
+  manualSpotCheckRequested Boolean       @default(false)
+  extraReviewRequested  Boolean          @default(false)
+  spotCheckRequired     Boolean          @default(false)
+  lowConfidenceFlag     Boolean          @default(false)
+  mismatchFlag          Boolean          @default(false)
+  notSureFlag           Boolean          @default(false)
+  disagreementFlag      Boolean          @default(false)
+  escalationReasons     String?
+  reviewSummary         String?
+  intentCheckSummary    String?
+  lastReviewedAt        DateTime?
+  lastIntentCheckedAt   DateTime?
+  finalizedAt           DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  assignments           Assignment[]
+  reviews               Review[]
+  intentChecks          IntentCheck[]
+  spotChecks            SpotCheck[]
+  auditLogs             AuditLog[]
+  dataset               Dataset          @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  canonicalSelectedBy   User?            @relation("CanonicalSelector", fields: [canonicalSelectedById], references: [id], onDelete: SetNull)
+
+  @@unique([datasetId, promptId])
+  @@index([status])
+  @@index([category])
+  @@index([finalDecision])
+}
+
+model Assignment {
+  id           String           @id @default(cuid())
+  promptId      String
+  userId        String
+  taskType      TaskType
+  status        AssignmentStatus @default(ASSIGNED)
+  overrideLimit Boolean          @default(false)
+  notes         String?
+  assignedById  String?
+  assignedAt    DateTime         @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+  prompt        Prompt           @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  user          User             @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy    User?            @relation("AssignmentAdmin", fields: [assignedById], references: [id], onDelete: SetNull)
+  review        Review?
+  intentCheck   IntentCheck?
+  spotCheck     SpotCheck?
+
+  @@unique([promptId, userId, taskType])
+  @@index([userId, taskType, status])
+  @@index([promptId, taskType])
+}
+
+model Review {
+  id                    String                    @id @default(cuid())
+  promptId              String
+  assignmentId          String                    @unique
+  reviewerId            String
+  originalMtUzbekPrompt String
+  editedUzbekPrompt     String
+  intentMatchesOriginal ReviewIntentMatch
+  harmCategoryMatches   ReviewHarmCategoryMatch
+  strengthOfRequest     ReviewStrengthOfRequest
+  meaningClarity        ReviewMeaningClarity
+  naturalness           ReviewNaturalness
+  meaningDrift          ReviewMeaningDrift
+  finalDecision         ReviewDecision
+  notes                 String?
+  extraFactorAnswers    String?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+  assignment            Assignment                @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  prompt                Prompt                    @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  reviewer              User                      @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  @@index([promptId, reviewerId])
+}
+
+model IntentCheck {
+  id             String            @id @default(cuid())
+  promptId        String
+  assignmentId    String            @unique
+  intentCheckerId String
+  recoveredIntent String
+  categoryGuess   String?
+  confidence      IntentConfidence
+  matchStatus     IntentMatchStatus?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  assignment      Assignment        @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  prompt          Prompt            @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  intentChecker   User              @relation(fields: [intentCheckerId], references: [id], onDelete: Cascade)
+
+  @@index([promptId, intentCheckerId])
+}
+
+model SpotCheck {
+  id            String          @id @default(cuid())
+  promptId       String
+  assignmentId   String?         @unique
+  spotCheckerId  String
+  action        SpotCheckAction
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  assignment    Assignment?     @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  prompt        Prompt          @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  spotChecker   User            @relation(fields: [spotCheckerId], references: [id], onDelete: Cascade)
+
+  @@index([promptId, spotCheckerId])
+}
+
+model AuditLog {
+  id         String       @id @default(cuid())
+  datasetId   String?
+  promptId    String?
+  actorId     String?
+  action      String
+  fromStatus  PromptStatus?
+  toStatus    PromptStatus?
+  taskType    TaskType?
+  metadata    String?
+  createdAt   DateTime     @default(now())
+  dataset      Dataset?     @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  prompt       Prompt?      @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  actor        User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([datasetId, createdAt])
+  @@index([promptId, createdAt])
+}
