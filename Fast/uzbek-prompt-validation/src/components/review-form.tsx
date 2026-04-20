@@ -96,49 +96,6 @@ export function ReviewForm({
     <form action={action} className="space-y-6">
       <input type="hidden" name="assignmentId" value={assignmentId} />
 
-      <div
-        className={`space-y-3 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition ${
-          requiresChecks ? "" : "opacity-45"
-        }`}
-      >
-        <div className="space-y-1">
-          <h2 className="text-base font-semibold text-slate-900">Quick yes/no checks</h2>
-          <p className="text-sm leading-6 text-slate-600">
-            Answer each question after choosing <span className="font-medium">Keep prompt</span> or{" "}
-            <span className="font-medium">Edit prompt</span>.
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          {CORE_REVIEW_QUESTIONS.map((question) => (
-            <BinaryQuestionRow
-              key={question.key}
-              label={question.label}
-              name={question.key}
-              value={draft[question.key] ?? ""}
-              disabled={!requiresChecks}
-              onChange={(value) => setDraft((current) => ({ ...current, [question.key]: value }))}
-            />
-          ))}
-
-          {extraFactors.map((factor) => (
-            <BinaryQuestionRow
-              key={factor.key}
-              label={formatExtraFactorQuestion(factor.label)}
-              name={`extraFactor:${factor.key}`}
-              value={draft[`extraFactor:${factor.key}`] ?? ""}
-              disabled={!requiresChecks}
-              onChange={(value) =>
-                setDraft((current) => ({
-                  ...current,
-                  [`extraFactor:${factor.key}`]: value,
-                }))
-              }
-            />
-          ))}
-        </div>
-      </div>
-
       <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
         <div className="space-y-1">
           <p className="text-sm font-semibold text-slate-900">How should this prompt move forward?</p>
@@ -219,6 +176,49 @@ export function ReviewForm({
             />
           </div>
         ) : null}
+      </div>
+
+      <div
+        className={`space-y-3 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition ${
+          requiresChecks ? "" : "opacity-45"
+        }`}
+      >
+        <div className="space-y-1">
+          <h2 className="text-base font-semibold text-slate-900">Quick yes/no checks</h2>
+          <p className="text-sm leading-6 text-slate-600">
+            Answer each question after choosing <span className="font-medium">Keep prompt</span> or{" "}
+            <span className="font-medium">Edit prompt</span>.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {CORE_REVIEW_QUESTIONS.map((question) => (
+            <BinaryQuestionRow
+              key={question.key}
+              label={question.label}
+              name={question.key}
+              value={draft[question.key] ?? ""}
+              disabled={!requiresChecks}
+              onChange={(value) => setDraft((current) => ({ ...current, [question.key]: value }))}
+            />
+          ))}
+
+          {extraFactors.map((factor) => (
+            <BinaryQuestionRow
+              key={factor.key}
+              label={formatExtraFactorQuestion(factor.label)}
+              name={`extraFactor:${factor.key}`}
+              value={draft[`extraFactor:${factor.key}`] ?? ""}
+              disabled={!requiresChecks}
+              onChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  [`extraFactor:${factor.key}`]: value,
+                }))
+              }
+            />
+          ))}
+        </div>
       </div>
 
       <div className="space-y-2">
