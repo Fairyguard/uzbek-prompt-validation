@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { Prisma, PromptStatus, TaskType } from "@prisma/client";
 import { autoAssignAction } from "@/app/actions";
+import { AdminPromptsTable } from "@/components/admin-prompts-table";
 import { NoticeBanner } from "@/components/notice-banner";
 import { PendingButton } from "@/components/pending-button";
-import { StatusBadge } from "@/components/status-badge";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/utils";
@@ -13,6 +13,30 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 function getStringParam(params: Record<string, string | string[] | undefined>, key: string) {
   const value = params[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function buildReturnTo(params: Record<string, string | string[] | undefined>) {
+  const search = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (key === "notice" || key === "error" || value == null) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value
+        .filter((entry) => entry.length > 0)
+        .forEach((entry) => search.append(key, entry));
+      return;
+    }
+
+    if (value.length > 0) {
+      search.set(key, value);
+    }
+  });
+
+  const query = search.toString();
+  return query.length > 0 ? `/admin/prompts?${query}` : "/admin/prompts";
 }
 
 export default async function AdminPromptsPage({
@@ -34,6 +58,7 @@ export default async function AdminPromptsPage({
   const lowConfidenceOnly = getStringParam(params, "lowConfidenceOnly") === "true";
   const sentToSpotCheckOnly = getStringParam(params, "sentToSpotCheckOnly") === "true";
   const needsRevisionOnly = getStringParam(params, "needsRevisionOnly") === "true";
+  const returnTo = buildReturnTo(params);
 
   const where: Prisma.PromptWhereInput = {
     ...(datasetId ? { datasetId } : {}),
@@ -90,12 +115,29 @@ export default async function AdminPromptsPage({
       orderBy: { updatedAt: "desc" },
     }),
   ]);
+
   const selectedDataset = datasets.find((dataset) => dataset.id === datasetId) ?? datasets[0];
   const availableTaskTypes = [
     TaskType.REVIEW,
     ...(selectedDataset?.settings?.intentCheckEnabled ? [TaskType.INTENT_CHECK] : []),
     ...(selectedDataset?.settings?.spotCheckEnabled ? [TaskType.SPOT_CHECK] : []),
   ];
+  const promptRows = prompts.map((prompt) => ({
+    id: prompt.id,
+    promptId: prompt.promptId,
+    category: prompt.category,
+    status: prompt.status,
+    reviewProgress: `${prompt._count.reviews}/${prompt.requiredReviews}`,
+    intentProgress: prompt.dataset.settings?.intentCheckEnabled
+      ? `${prompt._count.intentChecks}/${prompt.requiredIntentChecks}`
+      : "Off",
+    latestReviewerSummary: prompt.reviews[0]?.finalDecision ?? "-",
+    latestIntentSummary: prompt.intentChecks[0]?.matchStatus ?? prompt.intentMatchStatus ?? "-",
+    spotCheckResult: prompt.spotChecks[0]?.action ?? "-",
+    finalStatus: prompt.finalDecision ?? "-",
+    updatedAtLabel: formatDateTime(prompt.updatedAt),
+    detailHref: `/admin/prompts/${prompt.id}?returnTo=${encodeURIComponent(returnTo)}`,
+  }));
 
   return (
     <div className="space-y-8">
@@ -236,7 +278,7 @@ export default async function AdminPromptsPage({
                 Needs revision
               </label>
             </div>
-            <div className="lg:col-span-4 flex gap-3">
+            <div className="flex gap-3 lg:col-span-4">
               <button
                 type="submit"
                 className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
@@ -253,7 +295,7 @@ export default async function AdminPromptsPage({
           </form>
 
           <form action={autoAssignAction} className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5">
-            <input type="hidden" name="returnTo" value="/admin/prompts" />
+            <input type="hidden" name="returnTo" value={returnTo} />
             <h2 className="text-xl text-slate-900">Auto-assign randomly</h2>
             <div className="mt-4 grid gap-4">
               <label className="space-y-2 text-sm font-medium text-slate-700">
@@ -321,60 +363,7 @@ export default async function AdminPromptsPage({
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.18em] text-slate-500">
-              <tr>
-                <th className="px-5 py-4">Prompt</th>
-                <th className="px-5 py-4">Category</th>
-                <th className="px-5 py-4">Status</th>
-                <th className="px-5 py-4">Reviews</th>
-                <th className="px-5 py-4">Intent checks</th>
-                <th className="px-5 py-4">Latest reviewer summary</th>
-                <th className="px-5 py-4">Latest intent summary</th>
-                <th className="px-5 py-4">Spot check result</th>
-                <th className="px-5 py-4">Final status</th>
-                <th className="px-5 py-4">Updated</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {prompts.map((prompt) => (
-                <tr key={prompt.id} className="align-top hover:bg-slate-50/70">
-                  <td className="px-5 py-4">
-                    <Link href={`/admin/prompts/${prompt.id}`} className="font-semibold text-slate-900 underline-offset-4 hover:underline">
-                      {prompt.promptId}
-                    </Link>
-                  </td>
-                  <td className="px-5 py-4 text-slate-600">{prompt.category}</td>
-                  <td className="px-5 py-4">
-                    <StatusBadge status={prompt.status} />
-                  </td>
-                  <td className="px-5 py-4 text-slate-600">
-                    {prompt._count.reviews}/{prompt.requiredReviews}
-                  </td>
-                  <td className="px-5 py-4 text-slate-600">
-                    {prompt.dataset.settings?.intentCheckEnabled
-                      ? `${prompt._count.intentChecks}/${prompt.requiredIntentChecks}`
-                      : "Off"}
-                  </td>
-                  <td className="px-5 py-4 text-slate-600">
-                    {prompt.reviews[0]?.finalDecision ?? "—"}
-                  </td>
-                  <td className="px-5 py-4 text-slate-600">
-                    {prompt.intentChecks[0]?.matchStatus ?? prompt.intentMatchStatus ?? "—"}
-                  </td>
-                  <td className="px-5 py-4 text-slate-600">
-                    {prompt.spotChecks[0]?.action ?? "—"}
-                  </td>
-                  <td className="px-5 py-4 text-slate-600">{prompt.finalDecision ?? "—"}</td>
-                  <td className="px-5 py-4 text-slate-500">{formatDateTime(prompt.updatedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminPromptsTable key={returnTo} prompts={promptRows} returnTo={returnTo} />
     </div>
   );
 }

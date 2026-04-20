@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { importDatasetAction } from "@/app/actions";
+import { deleteDatasetAction, importDatasetAction } from "@/app/actions";
+import { ConfirmPendingButton } from "@/components/confirm-pending-button";
 import { NoticeBanner } from "@/components/notice-banner";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
@@ -118,8 +119,21 @@ export default async function AdminDatasetsPage({
                 >
                   Export XLSX
                 </a>
+                <form action={deleteDatasetAction}>
+                  <input type="hidden" name="returnTo" value="/admin/datasets" />
+                  <input type="hidden" name="datasetId" value={dataset.id} />
+                  <ConfirmPendingButton
+                    pendingLabel="Deleting dataset..."
+                    confirmMessage={`Permanently delete dataset "${dataset.name}" and all of its prompts, assignments, reviews, intent checks, spot checks, and history? This cannot be undone.`}
+                  >
+                    Delete dataset
+                  </ConfirmPendingButton>
+                </form>
               </div>
             </div>
+            <p className="mt-4 text-sm text-slate-500">
+              Deleting a dataset permanently removes every prompt and annotation linked to it.
+            </p>
           </article>
         ))}
       </div>

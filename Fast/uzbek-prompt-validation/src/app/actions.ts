@@ -45,6 +45,10 @@ function getReturnTo(formData: FormData, fallback: string) {
   return String(formData.get("returnTo") || fallback);
 }
 
+function getUniqueStringValues(values: FormDataEntryValue[]) {
+  return [...new Set(values.map((value) => String(value)).filter(Boolean))];
+}
+
 function normalizeActionError(error: unknown) {
   if (error instanceof Error) {
     return error.message;
@@ -658,6 +662,179 @@ export async function overridePromptStatusAction(formData: FormData) {
 
     revalidatePath("/admin/prompts");
     redirect(withMessage(returnTo, "notice", "Final status updated."));
+  } catch (error) {
+    redirect(withMessage(returnTo, "error", normalizeActionError(error)));
+  }
+}
+
+export async function deleteDatasetAction(formData: FormData) {
+  const session = await requireRole(RoleName.ADMIN);
+  const returnTo = getReturnTo(formData, "/admin/datasets");
+
+  try {
+    const datasetId = z.string().min(1).parse(formData.get("datasetId"));
+
+    const dataset = await prisma.$transaction(async (tx) => {
+      const existingDataset = await tx.dataset.findUnique({
+        where: { id: datasetId },
+        include: {
+          _count: {
+            select: {
+              prompts: true,
+            },
+          },
+        },
+      });
+
+      if (!existingDataset) {
+        throw new Error("Dataset not found.");
+      }
+
+      await addAuditLog(tx, {
+        actorId: session.user.id,
+        action: "dataset_deleted",
+        metadata: {
+          deletedDatasetId: existingDataset.id,
+          deletedDatasetName: existingDataset.name,
+          promptCount: existingDataset._count.prompts,
+          sourceFilename: existingDataset.sourceFilename,
+        },
+      });
+
+      await tx.dataset.delete({
+        where: { id: datasetId },
+      });
+
+      return existingDataset;
+    });
+
+    revalidatePath("/admin/dashboard");
+    revalidatePath("/admin/datasets");
+    revalidatePath("/admin/prompts");
+    revalidatePath("/admin/settings");
+    redirect(withMessage(returnTo, "notice", `Dataset "${dataset.name}" was deleted permanently.`));
+  } catch (error) {
+    redirect(withMessage(returnTo, "error", normalizeActionError(error)));
+  }
+}
+
+export async function deletePromptAction(formData: FormData) {
+  const session = await requireRole(RoleName.ADMIN);
+  const returnTo = getReturnTo(formData, "/admin/prompts");
+
+  try {
+    const promptId = z.string().min(1).parse(formData.get("promptId"));
+
+    const prompt = await prisma.$transaction(async (tx) => {
+      const existingPrompt = await tx.prompt.findUnique({
+        where: { id: promptId },
+        select: {
+          id: true,
+          datasetId: true,
+          promptId: true,
+          category: true,
+        },
+      });
+
+      if (!existingPrompt) {
+        throw new Error("Prompt not found.");
+      }
+
+      await addAuditLog(tx, {
+        actorId: session.user.id,
+        action: "prompt_deleted",
+        metadata: {
+          deletedPromptDbId: existingPrompt.id,
+          deletedPromptId: existingPrompt.promptId,
+          deletedPromptCategory: existingPrompt.category,
+          datasetId: existingPrompt.datasetId,
+        },
+      });
+
+      await tx.prompt.delete({
+        where: { id: promptId },
+      });
+
+      return existingPrompt;
+    });
+
+    revalidatePath("/admin/dashboard");
+    revalidatePath("/admin/datasets");
+    revalidatePath("/admin/prompts");
+    revalidatePath(`/admin/prompts/${promptId}`);
+    redirect(withMessage(returnTo, "notice", `Prompt "${prompt.promptId}" was deleted permanently.`));
+  } catch (error) {
+    redirect(withMessage(returnTo, "error", normalizeActionError(error)));
+  }
+}
+
+export async function bulkDeletePromptsAction(formData: FormData) {
+  const session = await requireRole(RoleName.ADMIN);
+  const returnTo = getReturnTo(formData, "/admin/prompts");
+
+  try {
+    const promptIds = z
+      .array(z.string().min(1))
+      .min(1, "Select at least one prompt to delete.")
+      .parse(getUniqueStringValues(formData.getAll("promptIds")));
+
+    const deletedCount = await prisma.$transaction(async (tx) => {
+      const prompts = await tx.prompt.findMany({
+        where: {
+          id: {
+            in: promptIds,
+          },
+        },
+        select: {
+          id: true,
+          datasetId: true,
+          promptId: true,
+          category: true,
+        },
+      });
+
+      if (prompts.length !== promptIds.length) {
+        throw new Error("One or more prompts could not be found.");
+      }
+
+      await addAuditLog(tx, {
+        actorId: session.user.id,
+        action: "prompts_bulk_deleted",
+        metadata: {
+          deletedPromptCount: prompts.length,
+          deletedPrompts: prompts.map((prompt) => ({
+            id: prompt.id,
+            promptId: prompt.promptId,
+            category: prompt.category,
+            datasetId: prompt.datasetId,
+          })),
+        },
+      });
+
+      const result = await tx.prompt.deleteMany({
+        where: {
+          id: {
+            in: promptIds,
+          },
+        },
+      });
+
+      return result.count;
+    });
+
+    revalidatePath("/admin/dashboard");
+    revalidatePath("/admin/datasets");
+    revalidatePath("/admin/prompts");
+    promptIds.forEach((promptId) => {
+      revalidatePath(`/admin/prompts/${promptId}`);
+    });
+    redirect(
+      withMessage(
+        returnTo,
+        "notice",
+        `Deleted ${deletedCount} prompt${deletedCount === 1 ? "" : "s"} permanently.`,
+      ),
+    );
   } catch (error) {
     redirect(withMessage(returnTo, "error", normalizeActionError(error)));
   }

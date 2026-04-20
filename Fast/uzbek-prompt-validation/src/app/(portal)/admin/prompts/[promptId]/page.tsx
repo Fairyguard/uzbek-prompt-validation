@@ -1,11 +1,13 @@
 import { FinalDecision, TaskType } from "@prisma/client";
 import {
+  deletePromptAction,
   forceSpotCheckAction,
   manualAssignAction,
   overridePromptStatusAction,
   requestExtraReviewAction,
   setCanonicalPromptAction,
 } from "@/app/actions";
+import { ConfirmPendingButton } from "@/components/confirm-pending-button";
 import { NoticeBanner } from "@/components/notice-banner";
 import { PendingButton } from "@/components/pending-button";
 import { StatusBadge } from "@/components/status-badge";
@@ -78,6 +80,11 @@ export default async function AdminPromptDetailPage({
   if (!prompt) {
     return <div className="text-sm text-slate-600">Prompt not found.</div>;
   }
+
+  const returnTo =
+    typeof query.returnTo === "string" && query.returnTo.length > 0
+      ? query.returnTo
+      : `/admin/prompts?datasetId=${prompt.datasetId}`;
 
   const availableTaskTypes = [
     TaskType.REVIEW,
@@ -224,6 +231,24 @@ export default async function AdminPromptDetailPage({
                 </div>
               </form>
             </div>
+
+            <form action={deletePromptAction} className="rounded-3xl border border-red-200 bg-red-50 p-4">
+              <input type="hidden" name="returnTo" value={returnTo} />
+              <input type="hidden" name="promptId" value={prompt.id} />
+              <p className="text-sm font-semibold text-red-900">Delete prompt</p>
+              <p className="mt-2 text-sm leading-6 text-red-800">
+                This permanently removes the prompt together with its assignments, reviews, intent
+                checks, spot checks, and prompt history.
+              </p>
+              <div className="mt-4 flex justify-end">
+                <ConfirmPendingButton
+                  pendingLabel="Deleting prompt..."
+                  confirmMessage={`Permanently delete prompt "${prompt.promptId}"? This cannot be undone.`}
+                >
+                  Delete prompt
+                </ConfirmPendingButton>
+              </div>
+            </form>
           </div>
         </aside>
       </section>
