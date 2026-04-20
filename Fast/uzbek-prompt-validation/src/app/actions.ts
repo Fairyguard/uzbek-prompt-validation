@@ -564,9 +564,12 @@ export async function overridePromptStatusAction(formData: FormData) {
 
 export async function submitReviewAction(formData: FormData) {
   const session = await requireRole(RoleName.REVIEWER);
+  const rawAssignmentId = String(formData.get("assignmentId") ?? "");
+  let destinationPath = "/reviewer/queue";
+  let destinationNotice = "Review flow complete.";
 
   try {
-    const assignmentId = z.string().min(1).parse(formData.get("assignmentId"));
+    const assignmentId = z.string().min(1).parse(rawAssignmentId);
     const translationChoice = z.nativeEnum(ReviewTranslationChoice).parse(
       formData.get("translationChoice"),
     );
@@ -730,13 +733,24 @@ export async function submitReviewAction(formData: FormData) {
     });
 
     if (nextAssignment) {
-      redirect(withMessage(`/reviewer/tasks/${nextAssignment.id}`, "notice", "Review submitted."));
+      destinationPath = `/reviewer/tasks/${nextAssignment.id}`;
+      destinationNotice = "";
+    } else {
+      destinationPath = "/reviewer/queue";
+      destinationNotice = "Review flow complete.";
     }
-
-    redirect(withMessage("/reviewer/queue", "notice", "Review flow complete."));
   } catch (error) {
-    redirect(withMessage("/reviewer/queue", "error", normalizeActionError(error)));
+    const returnPath = rawAssignmentId
+      ? `/reviewer/tasks/${rawAssignmentId}`
+      : "/reviewer/queue";
+    redirect(withMessage(returnPath, "error", normalizeActionError(error)));
   }
+
+  if (destinationNotice) {
+    redirect(withMessage(destinationPath, "notice", destinationNotice));
+  }
+
+  redirect(destinationPath);
 }
 
 export async function submitIntentCheckAction(formData: FormData) {
