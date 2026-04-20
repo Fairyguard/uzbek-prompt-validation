@@ -45,6 +45,7 @@ export default async function ReviewerQueuePage({
       assignedAt: "asc",
     },
   });
+  const nextAssignment = assignments[0] ?? null;
 
   return (
     <div className="space-y-6">
@@ -55,6 +56,16 @@ export default async function ReviewerQueuePage({
           Work from the assigned inbox only. Each prompt can appear once per reviewer, and reviewer
           assignments are separated from intent checking for the same prompt.
         </p>
+        {nextAssignment ? (
+          <div className="pt-2">
+            <Link
+              href={`/reviewer/tasks/${nextAssignment.id}`}
+              className="inline-flex rounded-full bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-700"
+            >
+              Open task
+            </Link>
+          </div>
+        ) : null}
       </div>
 
       <NoticeBanner

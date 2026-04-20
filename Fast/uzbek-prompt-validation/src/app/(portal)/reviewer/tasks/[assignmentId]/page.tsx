@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { AssignmentStatus, TaskType } from "@prisma/client";
 import { submitReviewAction } from "@/app/actions";
 import { ReviewForm } from "@/components/review-form";
+import { getReviewerExtraFactors } from "@/lib/constants";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { safeJsonParse } from "@/lib/utils";
@@ -44,9 +45,11 @@ export default async function ReviewerTaskPage({
     redirect("/reviewer/queue");
   }
 
-  const extraFactors = safeJsonParse<Array<{ key: string; label: string }>>(
-    assignment.prompt.dataset.settings?.extraSafetyFactors ?? "[]",
-    [],
+  const extraFactors = getReviewerExtraFactors(
+    safeJsonParse<Array<{ key: string; label: string }>>(
+      assignment.prompt.dataset.settings?.extraSafetyFactors ?? "[]",
+      [],
+    ),
   );
 
   return (

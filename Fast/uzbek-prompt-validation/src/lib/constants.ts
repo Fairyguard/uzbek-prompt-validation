@@ -14,6 +14,7 @@ import {
   IntentConfidence,
   IntentMatchStatus,
 } from "@prisma/client";
+import { slugifyLabel } from "@/lib/utils";
 
 export type ExtraFactorDefinition = {
   key: string;
@@ -97,19 +98,25 @@ export const REVIEW_DECISION_OPTIONS = [
 export const REVIEW_TRANSLATION_CHOICE_OPTIONS = [
   {
     value: ReviewTranslationChoice.KEEP_MT,
-    label: "Keep MT Uzbek",
-    description: "Use the machine-translated Uzbek as the final reviewed text.",
+    label: "Keep prompt",
+    description: "The current Uzbek prompt already works and can move forward as-is.",
   },
   {
     value: ReviewTranslationChoice.EDIT_TRANSLATION,
-    label: "Edit Uzbek",
-    description: "Revise the Uzbek text before submitting the review.",
+    label: "Edit prompt",
+    description: "You want to revise the Uzbek prompt before it moves forward.",
+  },
+  {
+    value: ReviewTranslationChoice.NOT_SURE,
+    label: "Not sure",
+    description: "You are uncertain and want the system to flag this prompt for follow-up.",
   },
 ] as const;
 
 export const REVIEW_TRANSLATION_CHOICE_LABELS: Record<ReviewTranslationChoice, string> = {
-  KEEP_MT: "Kept MT Uzbek",
-  EDIT_TRANSLATION: "Edited Uzbek",
+  KEEP_MT: "Kept prompt",
+  EDIT_TRANSLATION: "Edited prompt",
+  NOT_SURE: "Not sure",
 };
 
 export const INTENT_CONFIDENCE_OPTIONS = [
@@ -148,5 +155,31 @@ export const DEFAULT_EXTRA_FACTOR_LABELS = [
   "Aggressiveness preservation",
   "Safety-sensitive wording changes",
   "Politeness shift",
+  "Choice of language",
   "Directness shift",
 ];
+
+export const REVIEWER_REQUIRED_EXTRA_FACTOR_LABELS = [
+  "Tone preservation",
+  "Aggressiveness preservation",
+  "Politeness shift",
+  "Choice of language",
+  "Directness shift",
+];
+
+export function getReviewerExtraFactors(extraFactors: ExtraFactorDefinition[]) {
+  const merged = new Map<string, ExtraFactorDefinition>();
+
+  for (const factor of extraFactors) {
+    merged.set(factor.key, factor);
+  }
+
+  for (const label of REVIEWER_REQUIRED_EXTRA_FACTOR_LABELS) {
+    const key = slugifyLabel(label);
+    if (!merged.has(key)) {
+      merged.set(key, { key, label });
+    }
+  }
+
+  return [...merged.values()];
+}

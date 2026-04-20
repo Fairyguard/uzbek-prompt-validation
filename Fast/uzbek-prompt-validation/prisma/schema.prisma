@@ -97,6 +97,7 @@ enum ReviewDecision {
 enum ReviewTranslationChoice {
   KEEP_MT
   EDIT_TRANSLATION
+  NOT_SURE
 }
 
 enum IntentConfidence {

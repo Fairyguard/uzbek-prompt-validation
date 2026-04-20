@@ -25,6 +25,7 @@ import {
   DEFAULT_EXTRA_FACTOR_LABELS,
   DEFAULT_REVIEW_INSTRUCTIONS,
   ExtraFactorDefinition,
+  getReviewerExtraFactors,
 } from "@/lib/constants";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
@@ -86,6 +87,7 @@ function parseExtraFactorDefinitions(input: string) {
 }
 
 const emailSchema = z.string().email();
+const yesNoSchema = z.enum(["yes", "no"]);
 
 export async function createUserAction(formData: FormData) {
   await requireRole(RoleName.ADMIN);
@@ -568,19 +570,6 @@ export async function submitReviewAction(formData: FormData) {
     const translationChoice = z.nativeEnum(ReviewTranslationChoice).parse(
       formData.get("translationChoice"),
     );
-    const intentMatchesOriginal = z.nativeEnum(ReviewIntentMatch).parse(
-      formData.get("intentMatchesOriginal"),
-    );
-    const harmCategoryMatches = z.nativeEnum(ReviewHarmCategoryMatch).parse(
-      formData.get("harmCategoryMatches"),
-    );
-    const strengthOfRequest = z.nativeEnum(ReviewStrengthOfRequest).parse(
-      formData.get("strengthOfRequest"),
-    );
-    const meaningClarity = z.nativeEnum(ReviewMeaningClarity).parse(formData.get("meaningClarity"));
-    const naturalness = z.nativeEnum(ReviewNaturalness).parse(formData.get("naturalness"));
-    const meaningDrift = z.nativeEnum(ReviewMeaningDrift).parse(formData.get("meaningDrift"));
-    const finalDecision = z.nativeEnum(ReviewDecision).parse(formData.get("finalDecision"));
     const notes = String(formData.get("notes") ?? "").trim() || null;
 
     await prisma.$transaction(async (tx) => {
@@ -608,19 +597,84 @@ export async function submitReviewAction(formData: FormData) {
         throw new Error("Review assignment not found.");
       }
 
-      const extraFactors = assignment.prompt.dataset.settings?.extraSafetyFactors
-        ? (JSON.parse(assignment.prompt.dataset.settings.extraSafetyFactors) as ExtraFactorDefinition[])
-        : [];
-      const editedUzbekPrompt =
-        translationChoice === ReviewTranslationChoice.KEEP_MT
-          ? assignment.prompt.mtUzbekPrompt.trim()
-          : z.string().min(2).parse(formData.get("editedUzbekPrompt")).trim();
-      const extraFactorAnswers = Object.fromEntries(
-        extraFactors.map((factor) => [
-          factor.key,
-          String(formData.get(`extraFactor:${factor.key}`) ?? ""),
-        ]),
+      const extraFactors = getReviewerExtraFactors(
+        assignment.prompt.dataset.settings?.extraSafetyFactors
+          ? (JSON.parse(assignment.prompt.dataset.settings.extraSafetyFactors) as ExtraFactorDefinition[])
+          : [],
       );
+
+      let editedUzbekPrompt = assignment.prompt.mtUzbekPrompt.trim();
+      let intentMatchesOriginal: ReviewIntentMatch = ReviewIntentMatch.NOT_SURE;
+      let harmCategoryMatches: ReviewHarmCategoryMatch = ReviewHarmCategoryMatch.NOT_SURE;
+      let strengthOfRequest: ReviewStrengthOfRequest = ReviewStrengthOfRequest.NOT_SURE;
+      let meaningClarity: ReviewMeaningClarity = ReviewMeaningClarity.NOT_SURE;
+      let naturalness: ReviewNaturalness = ReviewNaturalness.NOT_SURE;
+      let meaningDrift: ReviewMeaningDrift = ReviewMeaningDrift.NOT_SURE;
+      let finalDecision: ReviewDecision = ReviewDecision.NEEDS_SECOND_REVIEW;
+      let extraFactorAnswers: Record<string, string> = Object.fromEntries(
+        extraFactors.map((factor) => [factor.key, "not_sure"]),
+      );
+
+      if (translationChoice !== ReviewTranslationChoice.NOT_SURE) {
+        const intentPreserved = yesNoSchema.parse(formData.get("intentPreserved"));
+        const strengthPreserved = yesNoSchema.parse(formData.get("strengthPreserved"));
+        const harmCategoryPreserved = yesNoSchema.parse(formData.get("harmCategoryPreserved"));
+        const naturalnessConfirmed = yesNoSchema.parse(formData.get("naturalnessConfirmed"));
+        const meaningClarityConfirmed = yesNoSchema.parse(
+          formData.get("meaningClarityConfirmed"),
+        );
+        const meaningPreserved = yesNoSchema.parse(formData.get("meaningPreserved"));
+        const extraFactorSelections = extraFactors.map((factor) => ({
+          key: factor.key,
+          answer: yesNoSchema.parse(formData.get(`extraFactor:${factor.key}`)),
+        }));
+        const allChecksPassed =
+          [
+            intentPreserved,
+            strengthPreserved,
+            harmCategoryPreserved,
+            naturalnessConfirmed,
+            meaningClarityConfirmed,
+            meaningPreserved,
+          ].every((answer) => answer === "yes") &&
+          extraFactorSelections.every((factor) => factor.answer === "yes");
+
+        editedUzbekPrompt =
+          translationChoice === ReviewTranslationChoice.KEEP_MT
+            ? assignment.prompt.mtUzbekPrompt.trim()
+            : z.string().min(2).parse(formData.get("editedUzbekPrompt")).trim();
+        intentMatchesOriginal =
+          intentPreserved === "yes"
+            ? ReviewIntentMatch.FULLY_MATCHES
+            : ReviewIntentMatch.DOES_NOT_MATCH;
+        harmCategoryMatches =
+          harmCategoryPreserved === "yes"
+            ? ReviewHarmCategoryMatch.SAME_CATEGORY
+            : ReviewHarmCategoryMatch.DIFFERENT_CATEGORY;
+        strengthOfRequest =
+          strengthPreserved === "yes"
+            ? ReviewStrengthOfRequest.SAME
+            : ReviewStrengthOfRequest.NOT_SURE;
+        meaningClarity =
+          meaningClarityConfirmed === "yes"
+            ? ReviewMeaningClarity.CLEAR
+            : ReviewMeaningClarity.UNCLEAR;
+        naturalness =
+          naturalnessConfirmed === "yes"
+            ? ReviewNaturalness.NATURAL
+            : ReviewNaturalness.UNNATURAL;
+        meaningDrift =
+          meaningPreserved === "yes"
+            ? ReviewMeaningDrift.NONE
+            : ReviewMeaningDrift.CLEAR_DRIFT;
+        finalDecision = allChecksPassed ? ReviewDecision.KEEP : ReviewDecision.REVISE;
+        extraFactorAnswers = Object.fromEntries(
+          extraFactorSelections.map((factor) => [
+            factor.key,
+            factor.answer === "yes" ? "preserved" : "shifted",
+          ]),
+        );
+      }
 
       await tx.review.create({
         data: {
@@ -662,7 +716,24 @@ export async function submitReviewAction(formData: FormData) {
     });
 
     revalidatePath("/reviewer/queue");
-    redirect(withMessage("/reviewer/queue", "notice", "Review submitted."));
+    const nextAssignment = await prisma.assignment.findFirst({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.REVIEW,
+        status: {
+          in: [AssignmentStatus.ASSIGNED, AssignmentStatus.IN_PROGRESS],
+        },
+      },
+      orderBy: {
+        assignedAt: "asc",
+      },
+    });
+
+    if (nextAssignment) {
+      redirect(withMessage(`/reviewer/tasks/${nextAssignment.id}`, "notice", "Review submitted."));
+    }
+
+    redirect(withMessage("/reviewer/queue", "notice", "Review flow complete."));
   } catch (error) {
     redirect(withMessage("/reviewer/queue", "error", normalizeActionError(error)));
   }
