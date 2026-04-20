@@ -24,6 +24,7 @@ export async function GET(request: Request) {
   const dataset = await prisma.dataset.findUnique({
     where: { id: datasetId },
     include: {
+      settings: true,
       prompts: {
         include: {
           reviews: {
@@ -56,6 +57,7 @@ export async function GET(request: Request) {
 
   const workbook = buildExportWorkbook({
     name: dataset.name,
+    reviewQuestions: dataset.settings?.reviewQuestions ?? null,
     prompts: dataset.prompts.map((prompt) => ({
       promptId: prompt.promptId,
       category: prompt.category,
@@ -85,6 +87,7 @@ export async function GET(request: Request) {
         meaningDrift: review.meaningDrift,
         finalDecision: review.finalDecision,
         notes: review.notes,
+        reviewCheckAnswers: review.extraFactorAnswers,
         createdAt: review.createdAt,
       })),
       intentChecks: prompt.intentChecks.map((check) => ({

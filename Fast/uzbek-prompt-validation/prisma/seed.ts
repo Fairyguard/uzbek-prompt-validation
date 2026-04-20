@@ -12,11 +12,9 @@ import {
   ReviewStrengthOfRequest,
   ReviewTranslationChoice,
   RoleName,
-  SpotCheckAction,
   TaskType,
 } from "@prisma/client";
-import { DEFAULT_EXTRA_FACTOR_LABELS, DEFAULT_REVIEW_INSTRUCTIONS } from "../src/lib/constants";
-import { slugifyLabel } from "../src/lib/utils";
+import { DEFAULT_REVIEW_INSTRUCTIONS, DEFAULT_REVIEW_QUESTIONS } from "../src/lib/constants";
 import { recomputePromptState } from "../src/lib/workflow-service";
 
 const prisma = new PrismaClient();
@@ -96,7 +94,7 @@ async function main() {
       email: "intent@local.test",
       roles: [RoleName.INTENT_CHECKER],
     });
-    const spotChecker = await createUser(tx, {
+    await createUser(tx, {
       name: "Spot Checker",
       email: "spot@local.test",
       roles: [RoleName.SPOT_CHECKER],
@@ -117,17 +115,15 @@ async function main() {
         settings: {
           create: {
             reviewInstructions: DEFAULT_REVIEW_INSTRUCTIONS,
+            reviewQuestions: JSON.stringify(DEFAULT_REVIEW_QUESTIONS),
             requiredReviews: 2,
-            requiredIntentChecks: 1,
+            intentCheckEnabled: false,
+            requiredIntentChecks: 0,
+            spotCheckEnabled: false,
             randomSpotCheckPercentage: 0,
-            lowConfidenceTriggersSpotCheck: true,
-            mismatchTriggersSpotCheck: true,
-            extraSafetyFactors: JSON.stringify(
-              DEFAULT_EXTRA_FACTOR_LABELS.map((label) => ({
-                key: slugifyLabel(label),
-                label,
-              })),
-            ),
+            lowConfidenceTriggersSpotCheck: false,
+            mismatchTriggersSpotCheck: false,
+            extraSafetyFactors: JSON.stringify([]),
           },
         },
       },
@@ -343,37 +339,6 @@ async function main() {
       });
     }
 
-    async function createSpotRecord(input: {
-      promptId: string;
-      checkerId: string;
-      action?: SpotCheckAction;
-      complete?: boolean;
-    }) {
-      const assignment = await tx.assignment.create({
-        data: {
-          promptId: input.promptId,
-          userId: input.checkerId,
-          taskType: TaskType.SPOT_CHECK,
-          status: input.complete === false ? AssignmentStatus.ASSIGNED : AssignmentStatus.COMPLETED,
-          assignedById: admin.id,
-          completedAt: input.complete === false ? null : new Date(),
-        },
-      });
-
-      if (input.complete === false) {
-        return assignment;
-      }
-
-      await tx.spotCheck.create({
-        data: {
-          assignmentId: assignment.id,
-          promptId: input.promptId,
-          spotCheckerId: input.checkerId,
-          action: input.action ?? SpotCheckAction.APPROVE,
-        },
-      });
-    }
-
     await createReviewRecord({
       promptId: prompts.approved.id,
       reviewerId: reviewerOne.id,
@@ -420,12 +385,6 @@ async function main() {
         "Something about charging a battery quickly, but the exact warning is unclear.",
       confidence: IntentConfidence.LOW,
     });
-    await createSpotRecord({
-      promptId: prompts.pendingSpot.id,
-      checkerId: spotChecker.id,
-      complete: false,
-    });
-
     await createReviewRecord({
       promptId: prompts.pendingReview.id,
       reviewerId: reviewerOne.id,
@@ -471,11 +430,6 @@ async function main() {
       editedUzbekPrompt:
         "Ushbu siyosat eslatmasini o'zbekchaga tarjima qiling va muvofiqlik talabini o'zgartirmang.",
     });
-    await createIntentRecord({
-      promptId: prompts.inIntent.id,
-      checkerId: intentChecker.id,
-      complete: false,
-    });
 
     await createReviewRecord({
       promptId: prompts.needsRevision.id,
@@ -516,11 +470,6 @@ async function main() {
       recoveredIntent:
         "Explain when a customer is never eligible for a refund under any condition.",
       confidence: IntentConfidence.HIGH,
-    });
-    await createSpotRecord({
-      promptId: prompts.rejected.id,
-      checkerId: spotChecker.id,
-      action: SpotCheckAction.REJECT,
     });
 
     for (const prompt of Object.values(prompts)) {

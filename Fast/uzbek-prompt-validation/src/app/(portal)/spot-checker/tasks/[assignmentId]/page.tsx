@@ -2,7 +2,14 @@ import { notFound, redirect } from "next/navigation";
 import { AssignmentStatus, TaskType } from "@prisma/client";
 import { submitSpotCheckAction } from "@/app/actions";
 import { PendingButton } from "@/components/pending-button";
-import { INTENT_MATCH_LABELS, REVIEW_TRANSLATION_CHOICE_LABELS, SPOT_CHECK_ACTION_OPTIONS } from "@/lib/constants";
+import { TaskProgress } from "@/components/task-progress";
+import {
+  ACTIVE_ASSIGNMENT_STATUSES,
+  INTENT_MATCH_LABELS,
+  REVIEW_TRANSLATION_CHOICE_LABELS,
+  SPOT_CHECK_ACTION_OPTIONS,
+  isActiveAssignmentStatus,
+} from "@/lib/constants";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { safeJsonParse } from "@/lib/utils";
@@ -17,32 +24,57 @@ export default async function SpotCheckerTaskPage({
   const session = await requireRole("SPOT_CHECKER");
   const { assignmentId } = await params;
 
-  const assignment = await prisma.assignment.findUnique({
-    where: { id: assignmentId },
-    include: {
-      prompt: {
-        include: {
-          reviews: {
-            include: {
-              reviewer: true,
+  const [assignment, totalAssignments, remainingAssignments] = await Promise.all([
+    prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      include: {
+        prompt: {
+          include: {
+            dataset: {
+              include: {
+                settings: true,
+              },
             },
-            orderBy: {
-              createdAt: "asc",
+            reviews: {
+              include: {
+                reviewer: true,
+              },
+              orderBy: {
+                createdAt: "asc",
+              },
             },
-          },
-          intentChecks: {
-            include: {
-              intentChecker: true,
-            },
-            orderBy: {
-              createdAt: "asc",
+            intentChecks: {
+              include: {
+                intentChecker: true,
+              },
+              orderBy: {
+                createdAt: "asc",
+              },
             },
           },
         },
+        spotCheck: true,
       },
-      spotCheck: true,
-    },
-  });
+    }),
+    prisma.assignment.count({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.SPOT_CHECK,
+        status: {
+          not: AssignmentStatus.CANCELLED,
+        },
+      },
+    }),
+    prisma.assignment.count({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.SPOT_CHECK,
+        status: {
+          in: [...ACTIVE_ASSIGNMENT_STATUSES],
+        },
+      },
+    }),
+  ]);
 
   if (
     !assignment ||
@@ -52,20 +84,30 @@ export default async function SpotCheckerTaskPage({
     notFound();
   }
 
-  if (assignment.status === AssignmentStatus.COMPLETED || assignment.spotCheck) {
+  if (!isActiveAssignmentStatus(assignment.status) || assignment.spotCheck) {
     redirect("/spot-checker/queue");
+  }
+
+  if (!assignment.prompt.dataset.settings?.spotCheckEnabled) {
+    redirect("/spot-checker/queue?notice=Spot%20checking%20is%20currently%20turned%20off.");
   }
 
   const escalationReasons = safeJsonParse<string[]>(
     assignment.prompt.escalationReasons ?? "[]",
     [],
   );
+  const completedAssignments = Math.max(totalAssignments - remainingAssignments, 0);
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Spot check</p>
         <h1 className="text-4xl text-slate-900">{assignment.prompt.promptId}</h1>
+        <TaskProgress
+          completedCount={completedAssignments}
+          remainingCount={remainingAssignments}
+          totalCount={totalAssignments}
+        />
         <p className="max-w-4xl text-sm leading-7 text-slate-600">
           Use the full evidence packet below to decide whether the translation is acceptable, needs
           revision, or should be rejected.
@@ -93,7 +135,7 @@ export default async function SpotCheckerTaskPage({
             <div className="mt-5 grid gap-4 md:grid-cols-3">
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Intended intent</p>
-                <p className="mt-3 text-sm leading-6 text-slate-700">{assignment.prompt.intendedIntent ?? "—"}</p>
+                <p className="mt-3 text-sm leading-6 text-slate-700">{assignment.prompt.intendedIntent ?? "-"}</p>
               </div>
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Intent match</p>
@@ -128,16 +170,16 @@ export default async function SpotCheckerTaskPage({
             <div className="mt-4 grid gap-4">
               {assignment.prompt.reviews.map((review) => (
                 <div key={review.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="font-semibold text-slate-900">{review.reviewer.name}</p>
-                      <p className="text-sm text-slate-500">{review.finalDecision}</p>
-                    </div>
-                    <p className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                      {REVIEW_TRANSLATION_CHOICE_LABELS[review.translationChoice]}
-                    </p>
-                    <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">
-                      {review.editedUzbekPrompt}
-                    </p>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="font-semibold text-slate-900">{review.reviewer.name}</p>
+                    <p className="text-sm text-slate-500">{review.finalDecision}</p>
+                  </div>
+                  <p className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {REVIEW_TRANSLATION_CHOICE_LABELS[review.translationChoice]}
+                  </p>
+                  <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">
+                    {review.editedUzbekPrompt}
+                  </p>
                   <div className="mt-4 grid gap-2 text-xs uppercase tracking-[0.16em] text-slate-500 md:grid-cols-3">
                     <span>Intent: {review.intentMatchesOriginal}</span>
                     <span>Clarity: {review.meaningClarity}</span>
@@ -165,8 +207,8 @@ export default async function SpotCheckerTaskPage({
                   </div>
                   <p className="mt-3 text-sm leading-7 text-slate-700">{intentCheck.recoveredIntent}</p>
                   <div className="mt-4 grid gap-2 text-xs uppercase tracking-[0.16em] text-slate-500 md:grid-cols-2">
-                    <span>Category guess: {intentCheck.categoryGuess ?? "—"}</span>
-                    <span>Match status: {intentCheck.matchStatus ?? "—"}</span>
+                    <span>Category guess: {intentCheck.categoryGuess ?? "-"}</span>
+                    <span>Match status: {intentCheck.matchStatus ?? "-"}</span>
                   </div>
                 </div>
               ))}
@@ -189,7 +231,7 @@ export default async function SpotCheckerTaskPage({
                 required
                 className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-900"
               >
-                <option value="">Select…</option>
+                <option value="">Select...</option>
                 {SPOT_CHECK_ACTION_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}

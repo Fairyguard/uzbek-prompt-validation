@@ -3,7 +3,7 @@ import { NoticeBanner } from "@/components/notice-banner";
 import { PendingButton } from "@/components/pending-button";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
-import { safeJsonParse } from "@/lib/utils";
+import { resolveReviewQuestions } from "@/lib/constants";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -24,6 +24,12 @@ export default async function AdminSettingsPage({
   const datasetId =
     (typeof params.datasetId === "string" ? params.datasetId : undefined) ?? datasets[0]?.id;
   const selected = datasets.find((dataset) => dataset.id === datasetId) ?? datasets[0];
+  const reviewQuestions = selected?.settings
+    ? resolveReviewQuestions(
+        selected.settings.reviewQuestions,
+        selected.settings.extraSafetyFactors,
+      )
+    : [];
 
   return (
     <div className="space-y-8">
@@ -31,8 +37,8 @@ export default async function AdminSettingsPage({
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Settings</p>
         <h1 className="text-4xl text-slate-900">Dataset workflow settings</h1>
         <p className="max-w-3xl text-sm leading-7 text-slate-600">
-          Configure the number of required reviews, intent checks, spot-check sampling, and the
-          instructions shown to evaluators.
+          Control review confirmation, intent checking, spot checking, and the checklist shown to
+          reviewers for each dataset.
         </p>
       </div>
 
@@ -73,7 +79,7 @@ export default async function AdminSettingsPage({
 
             <div className="grid gap-4 md:grid-cols-3">
               <label className="space-y-2 text-sm font-medium text-slate-700">
-                Required reviews per prompt
+                Successful reviews required
                 <input
                   name="requiredReviews"
                   type="number"
@@ -84,11 +90,11 @@ export default async function AdminSettingsPage({
                 />
               </label>
               <label className="space-y-2 text-sm font-medium text-slate-700">
-                Required intent checks per prompt
+                Intent checks required
                 <input
                   name="requiredIntentChecks"
                   type="number"
-                  min={1}
+                  min={0}
                   max={10}
                   defaultValue={selected.settings.requiredIntentChecks}
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-900"
@@ -110,11 +116,30 @@ export default async function AdminSettingsPage({
             <div className="grid gap-4 md:grid-cols-2">
               <label className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm font-medium text-slate-700">
                 <input
+                  name="intentCheckEnabled"
+                  type="checkbox"
+                  defaultChecked={selected.settings.intentCheckEnabled}
+                />
+                Enable intent checks for this dataset
+              </label>
+              <label className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm font-medium text-slate-700">
+                <input
+                  name="spotCheckEnabled"
+                  type="checkbox"
+                  defaultChecked={selected.settings.spotCheckEnabled}
+                />
+                Enable automatic spot checks for this dataset
+              </label>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm font-medium text-slate-700">
+                <input
                   name="lowConfidenceTriggersSpotCheck"
                   type="checkbox"
                   defaultChecked={selected.settings.lowConfidenceTriggersSpotCheck}
                 />
-                Low confidence always triggers spot check
+                Low-confidence intent results trigger spot check
               </label>
               <label className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm font-medium text-slate-700">
                 <input
@@ -122,7 +147,7 @@ export default async function AdminSettingsPage({
                   type="checkbox"
                   defaultChecked={selected.settings.mismatchTriggersSpotCheck}
                 />
-                Mismatch or manual-check-needed always triggers spot check
+                Intent mismatch or manual-check-needed triggers spot check
               </label>
             </div>
 
@@ -136,31 +161,19 @@ export default async function AdminSettingsPage({
               />
             </label>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="block space-y-2 text-sm font-medium text-slate-700">
-                Extra safety factors
-                <textarea
-                  name="extraSafetyFactors"
-                  rows={8}
-                  defaultValue={safeJsonParse<Array<{ label: string }>>(
-                    selected.settings.extraSafetyFactors ?? "[]",
-                    [],
-                  )
-                    .map((factor) => factor.label)
-                    .join("\n")}
-                  className="w-full rounded-3xl border border-slate-300 bg-white px-4 py-3 text-sm leading-7 outline-none transition focus:border-slate-900"
-                />
-              </label>
-              <label className="block space-y-2 text-sm font-medium text-slate-700">
-                Optional safety note
-                <textarea
-                  name="optionalSafetyFactorsNote"
-                  rows={8}
-                  defaultValue={selected.settings.optionalSafetyFactorsNote ?? ""}
-                  className="w-full rounded-3xl border border-slate-300 bg-white px-4 py-3 text-sm leading-7 outline-none transition focus:border-slate-900"
-                />
-              </label>
-            </div>
+            <label className="block space-y-2 text-sm font-medium text-slate-700">
+              Review checklist
+              <textarea
+                name="reviewQuestions"
+                rows={10}
+                defaultValue={reviewQuestions.map((question) => question.label).join("\n")}
+                className="w-full rounded-3xl border border-slate-300 bg-white px-4 py-3 text-sm leading-7 outline-none transition focus:border-slate-900"
+              />
+              <p className="text-xs leading-5 text-slate-500">
+                Enter one question per line. These questions unlock after the reviewer chooses
+                Keep prompt or Edit prompt.
+              </p>
+            </label>
 
             <div className="flex justify-end">
               <PendingButton>Save settings</PendingButton>

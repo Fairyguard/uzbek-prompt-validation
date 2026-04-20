@@ -52,7 +52,7 @@ export function deterministicPercentBucket(input: string) {
 
 export function formatDateTime(value: Date | string | null | undefined) {
   if (!value) {
-    return "—";
+    return "-";
   }
 
   const date = typeof value === "string" ? new Date(value) : value;

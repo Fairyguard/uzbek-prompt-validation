@@ -2,6 +2,8 @@ import Link from "next/link";
 import { AssignmentStatus, TaskType } from "@prisma/client";
 import { NoticeBanner } from "@/components/notice-banner";
 import { StatusBadge } from "@/components/status-badge";
+import { TaskProgress } from "@/components/task-progress";
+import { ACTIVE_ASSIGNMENT_STATUSES } from "@/lib/constants";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/utils";
@@ -16,36 +18,67 @@ export default async function IntentCheckerQueuePage({
   const session = await requireRole("INTENT_CHECKER");
   const params = await searchParams;
 
-  const assignments = await prisma.assignment.findMany({
-    where: {
-      userId: session.user.id,
-      taskType: TaskType.INTENT_CHECK,
-      status: {
-        not: AssignmentStatus.COMPLETED,
+  const [enabledDatasetCount, assignments, totalAssignments, remainingAssignments] = await Promise.all([
+    prisma.datasetSettings.count({
+      where: {
+        intentCheckEnabled: true,
       },
-    },
-    include: {
-      prompt: {
-        include: {
-          dataset: true,
-          _count: {
-            select: {
-              intentChecks: true,
+    }),
+    prisma.assignment.findMany({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.INTENT_CHECK,
+        status: {
+          in: [...ACTIVE_ASSIGNMENT_STATUSES],
+        },
+      },
+      include: {
+        prompt: {
+          include: {
+            dataset: true,
+            _count: {
+              select: {
+                intentChecks: true,
+              },
             },
           },
         },
       },
-    },
-    orderBy: {
-      assignedAt: "asc",
-    },
-  });
+      orderBy: {
+        assignedAt: "asc",
+      },
+    }),
+    prisma.assignment.count({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.INTENT_CHECK,
+        status: {
+          not: AssignmentStatus.CANCELLED,
+        },
+      },
+    }),
+    prisma.assignment.count({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.INTENT_CHECK,
+        status: {
+          in: [...ACTIVE_ASSIGNMENT_STATUSES],
+        },
+      },
+    }),
+  ]);
+  const completedAssignments = Math.max(totalAssignments - remainingAssignments, 0);
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Intent-check queue</p>
         <h1 className="text-4xl text-slate-900">Blind meaning recovery tasks</h1>
+        <TaskProgress
+          completedCount={completedAssignments}
+          remainingCount={remainingAssignments}
+          totalCount={totalAssignments}
+        />
         <p className="max-w-3xl text-sm leading-7 text-slate-600">
           Only the final Uzbek text is shown inside the task. Source English, reviewer labels, and
           intended intent are intentionally hidden.
@@ -57,14 +90,21 @@ export default async function IntentCheckerQueuePage({
         error={typeof params.error === "string" ? params.error : undefined}
       />
 
+      {enabledDatasetCount === 0 ? (
+        <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white/80 p-8 text-sm text-slate-600">
+          Intent checking is currently turned off for all datasets.
+        </div>
+      ) : null}
+
       <div className="grid gap-4">
-        {assignments.length === 0 ? (
+        {enabledDatasetCount > 0 && assignments.length === 0 ? (
           <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white/80 p-8 text-sm text-slate-600">
             No intent-check tasks are currently assigned to you.
           </div>
         ) : null}
 
-        {assignments.map((assignment) => (
+        {enabledDatasetCount > 0 &&
+          assignments.map((assignment) => (
           <article
             key={assignment.id}
             className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm"
@@ -100,7 +140,7 @@ export default async function IntentCheckerQueuePage({
               </div>
             </div>
           </article>
-        ))}
+          ))}
       </div>
     </div>
   );

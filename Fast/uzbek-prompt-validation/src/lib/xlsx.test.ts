@@ -25,6 +25,8 @@ describe("xlsx helpers", () => {
   it("builds a workbook with normalized sheets", () => {
     const buffer = buildExportWorkbook({
       name: "Demo",
+      reviewQuestions:
+        '[{"key":"intent_preserved","label":"Does the Uzbek preserve the original intent?"}]',
       prompts: [
         {
           promptId: "p-1",
@@ -56,6 +58,7 @@ describe("xlsx helpers", () => {
               meaningDrift: "NONE",
               finalDecision: "KEEP",
               notes: null,
+              reviewCheckAnswers: '{"intent_preserved":"yes"}',
               createdAt: new Date(),
             },
           ],

@@ -12,7 +12,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { REVIEW_TRANSLATION_CHOICE_LABELS } from "@/lib/constants";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, safeJsonParse } from "@/lib/utils";
 
 type Params = Promise<{ promptId: string }>;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -78,6 +78,12 @@ export default async function AdminPromptDetailPage({
   if (!prompt) {
     return <div className="text-sm text-slate-600">Prompt not found.</div>;
   }
+
+  const availableTaskTypes = [
+    TaskType.REVIEW,
+    ...(prompt.dataset.settings?.intentCheckEnabled ? [TaskType.INTENT_CHECK] : []),
+    ...(prompt.dataset.settings?.spotCheckEnabled ? [TaskType.SPOT_CHECK] : []),
+  ];
 
   return (
     <div className="space-y-8">
@@ -145,7 +151,7 @@ export default async function AdminPromptDetailPage({
                   name="taskType"
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-900"
                 >
-                  {Object.values(TaskType).map((taskType) => (
+                  {availableTaskTypes.map((taskType) => (
                     <option key={taskType} value={taskType}>
                       {taskType}
                     </option>
@@ -177,14 +183,20 @@ export default async function AdminPromptDetailPage({
             </form>
 
             <div className="grid gap-4 md:grid-cols-3">
-              <form action={forceSpotCheckAction} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <input type="hidden" name="returnTo" value={`/admin/prompts/${prompt.id}`} />
-                <input type="hidden" name="promptId" value={prompt.id} />
-                <p className="text-sm font-semibold text-slate-900">Force spot check</p>
-                <div className="mt-4 flex justify-end">
-                  <PendingButton>Send</PendingButton>
+              {prompt.dataset.settings?.spotCheckEnabled ? (
+                <form action={forceSpotCheckAction} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <input type="hidden" name="returnTo" value={`/admin/prompts/${prompt.id}`} />
+                  <input type="hidden" name="promptId" value={prompt.id} />
+                  <p className="text-sm font-semibold text-slate-900">Force spot check</p>
+                  <div className="mt-4 flex justify-end">
+                    <PendingButton>Send</PendingButton>
+                  </div>
+                </form>
+              ) : (
+                <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  Spot check is disabled for this dataset.
                 </div>
-              </form>
+              )}
               <form action={requestExtraReviewAction} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                 <input type="hidden" name="returnTo" value={`/admin/prompts/${prompt.id}`} />
                 <input type="hidden" name="promptId" value={prompt.id} />
@@ -220,57 +232,89 @@ export default async function AdminPromptDetailPage({
         <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-2xl text-slate-900">Reviews</h2>
           <div className="mt-4 grid gap-3">
-            {prompt.reviews.map((review) => (
-              <div key={review.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-slate-900">{review.reviewer.name}</p>
-                  <p className="text-sm text-slate-500">{review.finalDecision}</p>
+            {prompt.reviews.map((review) => {
+              const checkAnswers = safeJsonParse<Record<string, string>>(
+                review.extraFactorAnswers ?? "{}",
+                {},
+              );
+
+              return (
+                <div key={review.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold text-slate-900">{review.reviewer.name}</p>
+                    <p className="text-sm text-slate-500">{review.finalDecision}</p>
+                  </div>
+                  <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {REVIEW_TRANSLATION_CHOICE_LABELS[review.translationChoice]}
+                  </p>
+                  <p className="mt-3 text-sm leading-7 text-slate-700">{review.editedUzbekPrompt}</p>
+                  {Object.keys(checkAnswers).length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {Object.entries(checkAnswers).map(([key, value]) => (
+                        <span
+                          key={key}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600"
+                        >
+                          {key.replaceAll("_", " ")}: {value}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">
+                      {review.intentMatchesOriginal} · {review.meaningClarity} · {review.naturalness} ·{" "}
+                      {review.meaningDrift}
+                    </p>
+                  )}
                 </div>
-                <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  {REVIEW_TRANSLATION_CHOICE_LABELS[review.translationChoice]}
-                </p>
-                <p className="mt-3 text-sm leading-7 text-slate-700">{review.editedUzbekPrompt}</p>
-                <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">
-                  {review.intentMatchesOriginal} · {review.meaningClarity} · {review.naturalness} ·{" "}
-                  {review.meaningDrift}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </article>
 
         <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-2xl text-slate-900">Intent checks</h2>
           <div className="mt-4 grid gap-3">
-            {prompt.intentChecks.map((check) => (
-              <div key={check.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-slate-900">{check.intentChecker.name}</p>
-                  <p className="text-sm text-slate-500">{check.confidence}</p>
+            {prompt.dataset.settings?.intentCheckEnabled ? (
+              prompt.intentChecks.map((check) => (
+                <div key={check.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold text-slate-900">{check.intentChecker.name}</p>
+                    <p className="text-sm text-slate-500">{check.confidence}</p>
+                  </div>
+                  <p className="mt-3 text-sm leading-7 text-slate-700">{check.recoveredIntent}</p>
+                  <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">
+                    {check.categoryGuess ?? "No category guess"} · {check.matchStatus ?? "Not matched"}
+                  </p>
                 </div>
-                <p className="mt-3 text-sm leading-7 text-slate-700">{check.recoveredIntent}</p>
-                <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">
-                  {check.categoryGuess ?? "No category guess"} · {check.matchStatus ?? "Not matched"}
-                </p>
+              ))
+            ) : (
+              <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                Intent check is disabled for this dataset.
               </div>
-            ))}
+            )}
           </div>
         </article>
 
         <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-2xl text-slate-900">Spot checks and history</h2>
           <div className="mt-4 grid gap-3">
-            {prompt.spotChecks.map((spotCheck) => (
-              <div key={spotCheck.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-slate-900">{spotCheck.spotChecker.name}</p>
-                  <p className="text-sm text-slate-500">{spotCheck.action}</p>
+            {prompt.dataset.settings?.spotCheckEnabled ? (
+              prompt.spotChecks.map((spotCheck) => (
+                <div key={spotCheck.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold text-slate-900">{spotCheck.spotChecker.name}</p>
+                    <p className="text-sm text-slate-500">{spotCheck.action}</p>
+                  </div>
+                  {spotCheck.notes ? (
+                    <p className="mt-3 text-sm leading-7 text-slate-700">{spotCheck.notes}</p>
+                  ) : null}
                 </div>
-                {spotCheck.notes ? (
-                  <p className="mt-3 text-sm leading-7 text-slate-700">{spotCheck.notes}</p>
-                ) : null}
+              ))
+            ) : (
+              <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                Spot check is disabled for this dataset.
               </div>
-            ))}
+            )}
 
             {prompt.auditLogs.map((log) => (
               <div key={log.id} className="rounded-3xl border border-slate-200 bg-white p-4">

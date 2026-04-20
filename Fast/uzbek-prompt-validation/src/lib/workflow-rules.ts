@@ -7,11 +7,19 @@ import {
   ReviewMeaningClarity,
   ReviewMeaningDrift,
   ReviewNaturalness,
+  ReviewTranslationChoice,
 } from "@prisma/client";
-import { deterministicPercentBucket, jaccardSimilarity, normalizeComparableText } from "@/lib/utils";
+import {
+  deterministicPercentBucket,
+  jaccardSimilarity,
+  normalizeComparableText,
+} from "@/lib/utils";
 
 export type ReviewRecordLike = {
   id: string;
+  reviewerId?: string | null;
+  createdAt?: Date | string;
+  translationChoice: ReviewTranslationChoice;
   editedUzbekPrompt: string;
   intentMatchesOriginal: string;
   harmCategoryMatches: string;
@@ -31,7 +39,9 @@ export type IntentCheckLike = {
 
 export type SettingsLike = {
   requiredReviews: number;
+  intentCheckEnabled: boolean;
   requiredIntentChecks: number;
+  spotCheckEnabled: boolean;
   randomSpotCheckPercentage: number;
   lowConfidenceTriggersSpotCheck: boolean;
   mismatchTriggersSpotCheck: boolean;
@@ -58,6 +68,11 @@ export type PromptWorkflowLike = {
 export type ReviewSummary = {
   counts: Record<string, number>;
   reviewerDecisionCounts: Record<string, number>;
+  successfulReviewCount: number;
+  successfulKeepCount: number;
+  successfulEditCount: number;
+  latestSuccessfulChoice: ReviewTranslationChoice | null;
+  latestSuccessfulText: string | null;
   disagreement: boolean;
   hasNotSure: boolean;
   hasReject: boolean;
@@ -73,18 +88,124 @@ export type IntentSummary = {
   individualStatuses: IntentMatchStatus[];
 };
 
+export type ReviewSupportState = {
+  currentReviewPrompt: string;
+  canonicalUzbekPrompt: string | null;
+  reviewTargetReached: boolean;
+  confirmedReviewerCount: number;
+  confirmedKeepCount: number;
+  requiresKeepOnlyConfirmation: boolean;
+  needsCanonicalSelection: boolean;
+  normalizedOptions: string[];
+  consensus: boolean;
+};
+
+function isFollowUpReview(review: ReviewRecordLike) {
+  return (
+    review.translationChoice === ReviewTranslationChoice.NOT_SURE ||
+    review.finalDecision === ReviewDecision.NEEDS_SECOND_REVIEW ||
+    review.finalDecision === ReviewDecision.REJECT
+  );
+}
+
+function isDecisiveReview(review: ReviewRecordLike) {
+  return !isFollowUpReview(review);
+}
+
+function evaluateReviewSupport(args: {
+  reviews: ReviewRecordLike[];
+  fallbackPrompt: string;
+  existingCanonical?: string | null;
+  requiredReviewTarget?: number;
+}): ReviewSupportState {
+  const requiredReviewTarget = Math.max(args.requiredReviewTarget ?? 2, 1);
+  let currentReviewPrompt =
+    args.existingCanonical?.trim() || args.fallbackPrompt.trim();
+  let currentPromptKey = normalizeComparableText(currentReviewPrompt);
+  let confirmedReviewerIds = new Set<string>();
+  let confirmedKeepReviewerIds = new Set<string>();
+  let requiresKeepOnlyConfirmation = false;
+
+  for (const review of args.reviews) {
+    const nextPrompt = review.editedUzbekPrompt.trim() || currentReviewPrompt;
+    const nextPromptKey = normalizeComparableText(nextPrompt);
+
+    if (isFollowUpReview(review)) {
+      currentReviewPrompt = nextPrompt;
+      currentPromptKey = nextPromptKey;
+      confirmedReviewerIds.clear();
+      confirmedKeepReviewerIds.clear();
+      requiresKeepOnlyConfirmation = true;
+      continue;
+    }
+
+    if (review.translationChoice === ReviewTranslationChoice.EDIT_TRANSLATION) {
+      currentReviewPrompt = nextPrompt;
+      currentPromptKey = nextPromptKey;
+      confirmedReviewerIds = requiresKeepOnlyConfirmation
+        ? new Set<string>()
+        : new Set(review.reviewerId ? [review.reviewerId] : []);
+      confirmedKeepReviewerIds = new Set<string>();
+      continue;
+    }
+
+    if (nextPromptKey !== currentPromptKey) {
+      currentReviewPrompt = nextPrompt;
+      currentPromptKey = nextPromptKey;
+      confirmedReviewerIds.clear();
+      confirmedKeepReviewerIds.clear();
+    }
+
+    currentReviewPrompt = nextPrompt;
+    currentPromptKey = nextPromptKey;
+
+    if (review.reviewerId) {
+      confirmedReviewerIds.add(review.reviewerId);
+      confirmedKeepReviewerIds.add(review.reviewerId);
+    }
+  }
+
+  const confirmedReviewerCount = requiresKeepOnlyConfirmation
+    ? confirmedKeepReviewerIds.size
+    : confirmedReviewerIds.size;
+  const confirmedKeepCount = confirmedKeepReviewerIds.size;
+  const reviewTargetReached =
+    confirmedReviewerCount >= requiredReviewTarget &&
+    confirmedKeepCount >= 1;
+
+  return {
+    currentReviewPrompt,
+    canonicalUzbekPrompt: reviewTargetReached ? currentReviewPrompt : null,
+    reviewTargetReached,
+    confirmedReviewerCount,
+    confirmedKeepCount,
+    requiresKeepOnlyConfirmation,
+    needsCanonicalSelection: false,
+    normalizedOptions: currentPromptKey ? [currentPromptKey] : [],
+    consensus: reviewTargetReached,
+  };
+}
+
 export function buildReviewSummary(reviews: ReviewRecordLike[]): ReviewSummary {
   const counts: Record<string, number> = {};
   const reviewerDecisionCounts: Record<string, number> = {};
+  const decisiveTexts = new Set<string>();
 
   let hasNotSure = false;
   let hasReject = false;
   let hasClearDrift = false;
   let hasUnclear = false;
   let hasUnnatural = false;
+  let successfulReviewCount = 0;
+  let successfulKeepCount = 0;
+  let successfulEditCount = 0;
+  let latestSuccessfulChoice: ReviewTranslationChoice | null = null;
+  let latestSuccessfulText: string | null = null;
 
   for (const review of reviews) {
-    reviewerDecisionCounts[review.finalDecision] = (reviewerDecisionCounts[review.finalDecision] ?? 0) + 1;
+    counts[review.translationChoice] = (counts[review.translationChoice] ?? 0) + 1;
+    reviewerDecisionCounts[review.finalDecision] =
+      (reviewerDecisionCounts[review.finalDecision] ?? 0) + 1;
 
     [
       review.intentMatchesOriginal,
@@ -94,17 +215,13 @@ export function buildReviewSummary(reviews: ReviewRecordLike[]): ReviewSummary {
       review.naturalness,
       review.meaningDrift,
       review.finalDecision,
+      review.translationChoice,
     ].forEach((value) => {
       counts[value] = (counts[value] ?? 0) + 1;
     });
 
     if (
-      review.intentMatchesOriginal === "NOT_SURE" ||
-      review.harmCategoryMatches === "NOT_SURE" ||
-      review.strengthOfRequest === "NOT_SURE" ||
-      review.meaningClarity === ReviewMeaningClarity.NOT_SURE ||
-      review.naturalness === ReviewNaturalness.NOT_SURE ||
-      review.meaningDrift === ReviewMeaningDrift.NOT_SURE ||
+      review.translationChoice === ReviewTranslationChoice.NOT_SURE ||
       review.finalDecision === ReviewDecision.NEEDS_SECOND_REVIEW
     ) {
       hasNotSure = true;
@@ -125,14 +242,34 @@ export function buildReviewSummary(reviews: ReviewRecordLike[]): ReviewSummary {
     if (review.naturalness === ReviewNaturalness.UNNATURAL) {
       hasUnnatural = true;
     }
-  }
 
-  const uniqueDecisions = Object.keys(reviewerDecisionCounts);
+    if (!isDecisiveReview(review)) {
+      continue;
+    }
+
+    successfulReviewCount += 1;
+    latestSuccessfulChoice = review.translationChoice;
+    latestSuccessfulText = review.editedUzbekPrompt.trim();
+    decisiveTexts.add(normalizeComparableText(review.editedUzbekPrompt));
+
+    if (review.translationChoice === ReviewTranslationChoice.KEEP_MT) {
+      successfulKeepCount += 1;
+    }
+
+    if (review.translationChoice === ReviewTranslationChoice.EDIT_TRANSLATION) {
+      successfulEditCount += 1;
+    }
+  }
 
   return {
     counts,
     reviewerDecisionCounts,
-    disagreement: uniqueDecisions.length > 1,
+    successfulReviewCount,
+    successfulKeepCount,
+    successfulEditCount,
+    latestSuccessfulChoice,
+    latestSuccessfulText,
+    disagreement: decisiveTexts.size > 1 || hasReject,
     hasNotSure,
     hasReject,
     hasClearDrift,
@@ -143,42 +280,29 @@ export function buildReviewSummary(reviews: ReviewRecordLike[]): ReviewSummary {
 
 export function chooseCanonicalUzbek(
   reviews: ReviewRecordLike[],
+  baseUzbekPrompt: string,
+  existingCanonical?: string | null,
+  requiredReviewTarget = 2,
+) {
+  return evaluateReviewSupport({
+    reviews,
+    fallbackPrompt: baseUzbekPrompt,
+    existingCanonical,
+    requiredReviewTarget,
+  });
+}
+
+export function getCurrentReviewPrompt(
+  reviews: ReviewRecordLike[],
+  fallbackPrompt: string,
   existingCanonical?: string | null,
 ) {
-  if (reviews.length === 0) {
-    return {
-      canonicalUzbekPrompt: existingCanonical ?? null,
-      needsCanonicalSelection: false,
-      normalizedOptions: [] as string[],
-      consensus: false,
-    };
-  }
-
-  const normalizedMap = new Map<string, string>();
-
-  for (const review of reviews) {
-    const normalized = normalizeComparableText(review.editedUzbekPrompt);
-    if (!normalizedMap.has(normalized)) {
-      normalizedMap.set(normalized, review.editedUzbekPrompt.trim());
-    }
-  }
-
-  if (normalizedMap.size === 1) {
-    const canonical = normalizedMap.values().next().value as string;
-    return {
-      canonicalUzbekPrompt: canonical,
-      needsCanonicalSelection: false,
-      normalizedOptions: [...normalizedMap.keys()],
-      consensus: true,
-    };
-  }
-
-  return {
-    canonicalUzbekPrompt: existingCanonical ?? null,
-    needsCanonicalSelection: !existingCanonical,
-    normalizedOptions: [...normalizedMap.keys()],
-    consensus: false,
-  };
+  return evaluateReviewSupport({
+    reviews,
+    fallbackPrompt,
+    existingCanonical,
+    requiredReviewTarget: Number.MAX_SAFE_INTEGER,
+  }).currentReviewPrompt;
 }
 
 export function compareIntentText(
@@ -246,37 +370,23 @@ export function buildIntentSummary(
 
 export function computeEscalationReasons(args: {
   prompt: Pick<PromptWorkflowLike, "id" | "manualSpotCheckRequested" | "randomSpotCheckSelected">;
-  reviewSummary: ReviewSummary;
   intentSummary: IntentSummary;
   settings: SettingsLike;
 }) {
   const reasons: string[] = [];
 
-  if (args.reviewSummary.hasNotSure) {
-    reasons.push("review_not_sure");
-  }
-
-  if (args.reviewSummary.hasReject) {
-    reasons.push("review_reject");
-  }
-
-  if (args.reviewSummary.hasClearDrift) {
-    reasons.push("review_clear_drift");
-  }
-
-  if (args.reviewSummary.hasUnclear) {
-    reasons.push("review_unclear");
-  }
-
-  if (args.reviewSummary.hasUnnatural) {
-    reasons.push("review_unnatural");
-  }
-
-  if (args.intentSummary.lowConfidence && args.settings.lowConfidenceTriggersSpotCheck) {
+  if (
+    args.settings.spotCheckEnabled &&
+    args.settings.intentCheckEnabled &&
+    args.intentSummary.lowConfidence &&
+    args.settings.lowConfidenceTriggersSpotCheck
+  ) {
     reasons.push("low_intent_confidence");
   }
 
   if (
+    args.settings.spotCheckEnabled &&
+    args.settings.intentCheckEnabled &&
     args.settings.mismatchTriggersSpotCheck &&
     (args.intentSummary.aggregateStatus === IntentMatchStatus.MISMATCH ||
       args.intentSummary.aggregateStatus === IntentMatchStatus.MANUAL_CHECK_NEEDED)
@@ -284,11 +394,11 @@ export function computeEscalationReasons(args: {
     reasons.push("intent_mismatch_or_manual_check");
   }
 
-  if (args.prompt.manualSpotCheckRequested) {
+  if (args.settings.spotCheckEnabled && args.prompt.manualSpotCheckRequested) {
     reasons.push("manual_admin_selection");
   }
 
-  if (args.prompt.randomSpotCheckSelected) {
+  if (args.settings.spotCheckEnabled && args.prompt.randomSpotCheckSelected) {
     reasons.push("random_sampling");
   }
 
@@ -304,25 +414,16 @@ export function shouldSelectRandomSpotCheck(promptId: string, percentage: number
 }
 
 export function computeAutoFinalDecision(args: {
-  reviewSummary: ReviewSummary;
+  intentEnabled: boolean;
   intentSummary: IntentSummary;
 }) {
-  const hasOnlyKeepDecisions =
-    Object.keys(args.reviewSummary.reviewerDecisionCounts).length === 1 &&
-    args.reviewSummary.reviewerDecisionCounts[ReviewDecision.KEEP] > 0;
-
-  if (
-    hasOnlyKeepDecisions &&
-    args.intentSummary.aggregateStatus === IntentMatchStatus.MATCH &&
-    !args.reviewSummary.hasNotSure &&
-    !args.reviewSummary.hasClearDrift &&
-    !args.reviewSummary.hasUnclear &&
-    !args.reviewSummary.hasUnnatural
-  ) {
+  if (!args.intentEnabled) {
     return FinalDecision.APPROVED;
   }
 
-  return FinalDecision.NEEDS_REVISION;
+  return args.intentSummary.aggregateStatus === IntentMatchStatus.MATCH
+    ? FinalDecision.APPROVED
+    : FinalDecision.NEEDS_REVISION;
 }
 
 export function computePromptState(args: {
@@ -332,15 +433,17 @@ export function computePromptState(args: {
   intentSummary: IntentSummary;
   canonicalDecision: ReturnType<typeof chooseCanonicalUzbek>;
 }) {
-  const requiredReviewTarget =
-    args.prompt.requiredReviews + (args.prompt.extraReviewRequested ? 1 : 0);
-  const reviewComplete = args.prompt.completedReviewAssignments >= requiredReviewTarget;
+  const intentEnabled =
+    args.settings.intentCheckEnabled && args.prompt.requiredIntentChecks > 0;
+  const reviewComplete = args.canonicalDecision.reviewTargetReached;
   const intentComplete =
-    args.prompt.completedIntentAssignments >= args.prompt.requiredIntentChecks &&
-    Boolean(args.canonicalDecision.canonicalUzbekPrompt);
+    !intentEnabled ||
+    (args.prompt.completedIntentAssignments >= args.prompt.requiredIntentChecks &&
+      Boolean(args.canonicalDecision.canonicalUzbekPrompt));
   const randomSpotCheckSelected =
-    args.prompt.randomSpotCheckSelected ||
-    shouldSelectRandomSpotCheck(args.prompt.id, args.settings.randomSpotCheckPercentage);
+    args.settings.spotCheckEnabled &&
+    (args.prompt.randomSpotCheckSelected ||
+      shouldSelectRandomSpotCheck(args.prompt.id, args.settings.randomSpotCheckPercentage));
 
   const escalationReasons = computeEscalationReasons({
     prompt: {
@@ -348,7 +451,6 @@ export function computePromptState(args: {
       manualSpotCheckRequested: args.prompt.manualSpotCheckRequested,
       randomSpotCheckSelected,
     },
-    reviewSummary: args.reviewSummary,
     intentSummary: args.intentSummary,
     settings: args.settings,
   });
@@ -359,7 +461,7 @@ export function computePromptState(args: {
       finalDecision: FinalDecision.REJECTED,
       escalationReasons,
       randomSpotCheckSelected,
-      spotCheckRequired: true,
+      spotCheckRequired: args.settings.spotCheckEnabled,
     };
   }
 
@@ -379,7 +481,7 @@ export function computePromptState(args: {
       finalDecision: FinalDecision.NEEDS_REVISION,
       escalationReasons,
       randomSpotCheckSelected,
-      spotCheckRequired: true,
+      spotCheckRequired: args.settings.spotCheckEnabled,
     };
   }
 
@@ -390,31 +492,12 @@ export function computePromptState(args: {
       finalDecision: FinalDecision.APPROVED,
       escalationReasons,
       randomSpotCheckSelected,
-      spotCheckRequired: true,
-    };
-  }
-
-  if (latestSpotCheck === "SEND_BACK_FOR_REVISION") {
-    return {
-      status: PromptStatus.NEEDS_REVISION,
-      finalDecision: FinalDecision.NEEDS_REVISION,
-      escalationReasons,
-      randomSpotCheckSelected,
-      spotCheckRequired: true,
-    };
-  }
-
-  if (latestSpotCheck === "REJECT") {
-    return {
-      status: PromptStatus.REJECTED,
-      finalDecision: FinalDecision.REJECTED,
-      escalationReasons,
-      randomSpotCheckSelected,
-      spotCheckRequired: true,
+      spotCheckRequired: args.settings.spotCheckEnabled,
     };
   }
 
   if (
+    latestSpotCheck === "SEND_BACK_FOR_REVISION" ||
     latestSpotCheck === "FLAG_MEANING_DRIFT" ||
     latestSpotCheck === "FLAG_UNCLEAR_WORDING" ||
     latestSpotCheck === "FLAG_UNREALISTIC_UZBEK"
@@ -424,7 +507,17 @@ export function computePromptState(args: {
       finalDecision: FinalDecision.NEEDS_REVISION,
       escalationReasons,
       randomSpotCheckSelected,
-      spotCheckRequired: true,
+      spotCheckRequired: args.settings.spotCheckEnabled,
+    };
+  }
+
+  if (latestSpotCheck === "REJECT") {
+    return {
+      status: PromptStatus.REJECTED,
+      finalDecision: FinalDecision.REJECTED,
+      escalationReasons,
+      randomSpotCheckSelected,
+      spotCheckRequired: args.settings.spotCheckEnabled,
     };
   }
 
@@ -441,17 +534,7 @@ export function computePromptState(args: {
     };
   }
 
-  if (args.canonicalDecision.needsCanonicalSelection) {
-    return {
-      status: PromptStatus.REVIEWED,
-      finalDecision: null,
-      escalationReasons,
-      randomSpotCheckSelected,
-      spotCheckRequired: false,
-    };
-  }
-
-  if (!intentComplete) {
+  if (intentEnabled && !intentComplete) {
     return {
       status:
         args.prompt.openIntentAssignments > 0 || args.prompt.completedIntentAssignments > 0
@@ -464,7 +547,7 @@ export function computePromptState(args: {
     };
   }
 
-  if (escalationReasons.length > 0) {
+  if (args.settings.spotCheckEnabled && escalationReasons.length > 0) {
     return {
       status: PromptStatus.PENDING_SPOT_CHECK,
       finalDecision: null,
@@ -475,7 +558,7 @@ export function computePromptState(args: {
   }
 
   const autoFinalDecision = computeAutoFinalDecision({
-    reviewSummary: args.reviewSummary,
+    intentEnabled,
     intentSummary: args.intentSummary,
   });
 

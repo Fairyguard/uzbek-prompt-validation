@@ -3,32 +3,29 @@
 import { useEffect, useMemo, useState } from "react";
 import { ReviewTranslationChoice } from "@prisma/client";
 import {
-  EXTRA_FACTOR_OPTIONS,
-  ExtraFactorDefinition,
-  REVIEW_CATEGORY_OPTIONS,
-  REVIEW_CLARITY_OPTIONS,
-  REVIEW_DECISION_OPTIONS,
-  REVIEW_DRIFT_OPTIONS,
-  REVIEW_INTENT_OPTIONS,
-  REVIEW_NATURALNESS_OPTIONS,
-  REVIEW_STRENGTH_OPTIONS,
   REVIEW_TRANSLATION_CHOICE_OPTIONS,
+  ReviewQuestionDefinition,
 } from "@/lib/constants";
 import { PendingButton } from "@/components/pending-button";
 
 type ReviewFormProps = {
   assignmentId: string;
   initialUzbekPrompt: string;
-  extraFactors: ExtraFactorDefinition[];
+  reviewQuestions: ReviewQuestionDefinition[];
   action: (formData: FormData) => void;
 };
 
 type DraftState = Record<string, string>;
 
+const YES_NO_OPTIONS = [
+  { value: "yes", label: "Yes" },
+  { value: "no", label: "No" },
+] as const;
+
 export function ReviewForm({
   assignmentId,
   initialUzbekPrompt,
-  extraFactors,
+  reviewQuestions,
   action,
 }: ReviewFormProps) {
   const storageKey = useMemo(() => `review-draft:${assignmentId}`, [assignmentId]);
@@ -58,8 +55,11 @@ export function ReviewForm({
       return initialDraft;
     }
   });
+
   const isEditing = draft.translationChoice === ReviewTranslationChoice.EDIT_TRANSLATION;
-  const isKeepingMt = draft.translationChoice === ReviewTranslationChoice.KEEP_MT;
+  const isKeepingPrompt = draft.translationChoice === ReviewTranslationChoice.KEEP_MT;
+  const isNotSure = draft.translationChoice === ReviewTranslationChoice.NOT_SURE;
+  const requiresChecks = isEditing || isKeepingPrompt;
 
   useEffect(() => {
     window.localStorage.setItem(storageKey, JSON.stringify(draft));
@@ -71,9 +71,9 @@ export function ReviewForm({
 
       <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
         <div className="space-y-1">
-          <p className="text-sm font-semibold text-slate-900">Reviewed Uzbek text</p>
+          <p className="text-sm font-semibold text-slate-900">How should this prompt move forward?</p>
           <p className="text-sm leading-6 text-slate-600">
-            Choose whether to keep the MT Uzbek prompt as-is or submit an edited Uzbek version.
+            Choose whether to keep the current Uzbek prompt, edit it, or mark the case as not sure.
           </p>
         </div>
 
@@ -120,9 +120,11 @@ export function ReviewForm({
           })}
         </div>
 
-        {isKeepingMt ? (
+        {isKeepingPrompt || isNotSure ? (
           <div className="space-y-2">
-            <p className="text-sm font-semibold text-slate-700">Final Uzbek text</p>
+            <p className="text-sm font-semibold text-slate-700">
+              {isNotSure ? "Current Uzbek prompt" : "Prompt moving forward"}
+            </p>
             <p className="whitespace-pre-wrap rounded-3xl border border-slate-200 bg-white p-4 text-sm leading-7 text-slate-700">
               {initialUzbekPrompt}
             </p>
@@ -132,7 +134,7 @@ export function ReviewForm({
         {isEditing ? (
           <div className="space-y-2">
             <label className="text-sm font-semibold text-slate-700" htmlFor="editedUzbekPrompt">
-              Edited Uzbek translation
+              Edited Uzbek prompt
             </label>
             <textarea
               id="editedUzbekPrompt"
@@ -149,142 +151,113 @@ export function ReviewForm({
         ) : null}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <SelectField
-          label="Intent matches original"
-          name="intentMatchesOriginal"
-          options={REVIEW_INTENT_OPTIONS}
-          value={draft.intentMatchesOriginal ?? ""}
-          onChange={(value) => setDraft((current) => ({ ...current, intentMatchesOriginal: value }))}
-        />
-        <SelectField
-          label="Harm/category matches"
-          name="harmCategoryMatches"
-          options={REVIEW_CATEGORY_OPTIONS}
-          value={draft.harmCategoryMatches ?? ""}
-          onChange={(value) => setDraft((current) => ({ ...current, harmCategoryMatches: value }))}
-        />
-        <SelectField
-          label="Strength of request"
-          name="strengthOfRequest"
-          options={REVIEW_STRENGTH_OPTIONS}
-          value={draft.strengthOfRequest ?? ""}
-          onChange={(value) => setDraft((current) => ({ ...current, strengthOfRequest: value }))}
-        />
-        <SelectField
-          label="Meaning clarity in Uzbek"
-          name="meaningClarity"
-          options={REVIEW_CLARITY_OPTIONS}
-          value={draft.meaningClarity ?? ""}
-          onChange={(value) => setDraft((current) => ({ ...current, meaningClarity: value }))}
-        />
-        <SelectField
-          label="Naturalness"
-          name="naturalness"
-          options={REVIEW_NATURALNESS_OPTIONS}
-          value={draft.naturalness ?? ""}
-          onChange={(value) => setDraft((current) => ({ ...current, naturalness: value }))}
-        />
-        <SelectField
-          label="Meaning drift"
-          name="meaningDrift"
-          options={REVIEW_DRIFT_OPTIONS}
-          value={draft.meaningDrift ?? ""}
-          onChange={(value) => setDraft((current) => ({ ...current, meaningDrift: value }))}
-        />
+      <div
+        className={`space-y-3 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition ${
+          requiresChecks ? "" : "opacity-45"
+        }`}
+      >
+        <div className="space-y-1">
+          <h2 className="text-base font-semibold text-slate-900">Review checks</h2>
+          <p className="text-sm leading-6 text-slate-600">
+            These checks unlock after you choose <span className="font-medium">Keep prompt</span>{" "}
+            or <span className="font-medium">Edit prompt</span>, and they are stored as reviewer
+            guidance only.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {reviewQuestions.map((question) => (
+            <BinaryQuestionRow
+              key={question.key}
+              label={question.label}
+              name={`reviewQuestion:${question.key}`}
+              value={draft[`reviewQuestion:${question.key}`] ?? ""}
+              disabled={!requiresChecks}
+              onChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  [`reviewQuestion:${question.key}`]: value,
+                }))
+              }
+            />
+          ))}
+        </div>
       </div>
 
-      {extraFactors.length > 0 ? (
-        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-          <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Extra Safety Factors
-          </h3>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            {extraFactors.map((factor) => (
-              <SelectField
-                key={factor.key}
-                label={factor.label}
-                name={`extraFactor:${factor.key}`}
-                options={EXTRA_FACTOR_OPTIONS}
-                value={draft[`extraFactor:${factor.key}`] ?? ""}
-                onChange={(value) =>
-                  setDraft((current) => ({
-                    ...current,
-                    [`extraFactor:${factor.key}`]: value,
-                  }))
-                }
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="grid gap-4 md:grid-cols-[2fr_1fr]">
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-slate-700" htmlFor="notes">
-            Notes
-          </label>
-          <textarea
-            id="notes"
-            name="notes"
-            rows={4}
-            value={draft.notes ?? ""}
-            onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))}
-            className="w-full rounded-3xl border border-slate-300 bg-white px-4 py-3 text-sm leading-7 outline-none transition focus:border-slate-900"
-          />
-        </div>
-        <SelectField
-          label="Final reviewer decision"
-          name="finalDecision"
-          options={REVIEW_DECISION_OPTIONS}
-          value={draft.finalDecision ?? ""}
-          onChange={(value) => setDraft((current) => ({ ...current, finalDecision: value }))}
+      <div className="space-y-2">
+        <label className="text-sm font-semibold text-slate-700" htmlFor="notes">
+          Notes
+        </label>
+        <textarea
+          id="notes"
+          name="notes"
+          rows={4}
+          value={draft.notes ?? ""}
+          onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))}
+          className="w-full rounded-3xl border border-slate-300 bg-white px-4 py-3 text-sm leading-7 outline-none transition focus:border-slate-900"
         />
       </div>
 
       <div className="flex items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white p-4">
         <p className="text-sm text-slate-500">
-          Translation choice, draft text, and rubric answers autosave locally for this assignment.
+          Your selection and current answers autosave locally for this prompt.
         </p>
-        <PendingButton>Submit review</PendingButton>
+        <PendingButton>Submit / Next</PendingButton>
       </div>
     </form>
   );
 }
 
-function SelectField({
+function BinaryQuestionRow({
   label,
   name,
-  options,
   value,
+  disabled,
   onChange,
 }: {
   label: string;
   name: string;
-  options: ReadonlyArray<{ value: string; label: string }>;
   value: string;
+  disabled: boolean;
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="space-y-2">
-      <label className="text-sm font-semibold text-slate-700" htmlFor={name}>
-        {label}
-      </label>
-      <select
-        id={name}
-        name={name}
-        required
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-900"
-      >
-        <option value="">Select...</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+    <div
+      className={`flex flex-col gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-between ${
+        disabled ? "pointer-events-none" : ""
+      }`}
+    >
+      <p className="max-w-2xl text-sm font-medium leading-6 text-slate-900">{label}</p>
+      <div className="flex gap-2">
+        {YES_NO_OPTIONS.map((option) => {
+          const checked = value === option.value;
+
+          return (
+            <label
+              key={option.value}
+              className={`cursor-pointer rounded-full border px-4 py-2 text-sm font-medium transition ${
+                disabled
+                  ? "border-slate-200 bg-slate-100 text-slate-400"
+                  : checked
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-300 bg-white text-slate-700 hover:border-slate-500"
+              }`}
+            >
+              <input
+                type="radio"
+                name={name}
+                value={option.value}
+                checked={checked}
+                required={!disabled}
+                disabled={disabled}
+                onChange={(event) => onChange(event.target.value)}
+                className="sr-only"
+              />
+              {option.label}
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }

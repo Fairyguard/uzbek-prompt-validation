@@ -2,6 +2,8 @@ import Link from "next/link";
 import { AssignmentStatus, TaskType } from "@prisma/client";
 import { NoticeBanner } from "@/components/notice-banner";
 import { StatusBadge } from "@/components/status-badge";
+import { TaskProgress } from "@/components/task-progress";
+import { ACTIVE_ASSIGNMENT_STATUSES } from "@/lib/constants";
 import { requireRole } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/utils";
@@ -16,45 +18,82 @@ export default async function ReviewerQueuePage({
   const session = await requireRole("REVIEWER");
   const params = await searchParams;
 
-  const assignments = await prisma.assignment.findMany({
-    where: {
-      userId: session.user.id,
-      taskType: TaskType.REVIEW,
-      status: {
-        not: AssignmentStatus.COMPLETED,
+  const [assignments, totalAssignments, remainingAssignments] = await Promise.all([
+    prisma.assignment.findMany({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.REVIEW,
+        status: {
+          in: [...ACTIVE_ASSIGNMENT_STATUSES],
+        },
       },
-    },
-    include: {
-      prompt: {
-        include: {
-          dataset: {
-            include: {
-              settings: true,
+      include: {
+        prompt: {
+          include: {
+            dataset: {
+              include: {
+                settings: true,
+              },
             },
-          },
-          _count: {
-            select: {
-              reviews: true,
-              intentChecks: true,
+            _count: {
+              select: {
+                reviews: true,
+                intentChecks: true,
+              },
             },
           },
         },
       },
-    },
-    orderBy: {
-      assignedAt: "asc",
-    },
-  });
+      orderBy: {
+        assignedAt: "asc",
+      },
+    }),
+    prisma.assignment.count({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.REVIEW,
+        status: {
+          not: AssignmentStatus.CANCELLED,
+        },
+      },
+    }),
+    prisma.assignment.count({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.REVIEW,
+        status: {
+          in: [...ACTIVE_ASSIGNMENT_STATUSES],
+        },
+      },
+    }),
+  ]);
+  const nextAssignment = assignments[0] ?? null;
+  const completedAssignments = Math.max(totalAssignments - remainingAssignments, 0);
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Reviewer queue</p>
         <h1 className="text-4xl text-slate-900">Assigned review tasks</h1>
+        <TaskProgress
+          completedCount={completedAssignments}
+          remainingCount={remainingAssignments}
+          totalCount={totalAssignments}
+        />
         <p className="max-w-3xl text-sm leading-7 text-slate-600">
           Work from the assigned inbox only. Each prompt can appear once per reviewer, and reviewer
           assignments are separated from intent checking for the same prompt.
         </p>
+        {nextAssignment ? (
+          <div className="pt-2">
+            <Link
+              href={`/reviewer/tasks/${nextAssignment.id}`}
+              className="inline-flex rounded-full bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-700"
+            >
+              Open task
+            </Link>
+          </div>
+        ) : null}
       </div>
 
       <NoticeBanner

@@ -51,6 +51,9 @@ export default async function AdminPromptsPage({
 
   const [datasets, users, prompts] = await Promise.all([
     prisma.dataset.findMany({
+      include: {
+        settings: true,
+      },
       orderBy: { createdAt: "desc" },
     }),
     prisma.user.findMany({
@@ -60,6 +63,11 @@ export default async function AdminPromptsPage({
     prisma.prompt.findMany({
       where,
       include: {
+        dataset: {
+          include: {
+            settings: true,
+          },
+        },
         reviews: {
           orderBy: { createdAt: "desc" },
           take: 1,
@@ -82,6 +90,12 @@ export default async function AdminPromptsPage({
       orderBy: { updatedAt: "desc" },
     }),
   ]);
+  const selectedDataset = datasets.find((dataset) => dataset.id === datasetId) ?? datasets[0];
+  const availableTaskTypes = [
+    TaskType.REVIEW,
+    ...(selectedDataset?.settings?.intentCheckEnabled ? [TaskType.INTENT_CHECK] : []),
+    ...(selectedDataset?.settings?.spotCheckEnabled ? [TaskType.SPOT_CHECK] : []),
+  ];
 
   return (
     <div className="space-y-8">
@@ -246,7 +260,7 @@ export default async function AdminPromptsPage({
                 Dataset
                 <select
                   name="datasetId"
-                  defaultValue={datasetId ?? datasets[0]?.id}
+                  defaultValue={selectedDataset?.id}
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-900"
                 >
                   {datasets.map((dataset) => (
@@ -276,7 +290,7 @@ export default async function AdminPromptsPage({
                     name="taskType"
                     className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-900"
                   >
-                    {Object.values(TaskType).map((taskType) => (
+                    {availableTaskTypes.map((taskType) => (
                       <option key={taskType} value={taskType}>
                         {taskType}
                       </option>
@@ -340,7 +354,9 @@ export default async function AdminPromptsPage({
                     {prompt._count.reviews}/{prompt.requiredReviews}
                   </td>
                   <td className="px-5 py-4 text-slate-600">
-                    {prompt._count.intentChecks}/{prompt.requiredIntentChecks}
+                    {prompt.dataset.settings?.intentCheckEnabled
+                      ? `${prompt._count.intentChecks}/${prompt.requiredIntentChecks}`
+                      : "Off"}
                   </td>
                   <td className="px-5 py-4 text-slate-600">
                     {prompt.reviews[0]?.finalDecision ?? "—"}

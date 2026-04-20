@@ -2,6 +2,7 @@ import Link from "next/link";
 import { RoleName } from "@prisma/client";
 import { LayoutDashboard, SearchCheck, ShieldAlert, Users } from "lucide-react";
 import { requireUser } from "@/lib/rbac";
+import { prisma } from "@/lib/prisma";
 import { ROLE_LABELS } from "@/lib/constants";
 import { SignOutButton } from "@/components/sign-out-button";
 
@@ -11,6 +12,18 @@ export default async function PortalLayout({
   children: React.ReactNode;
 }) {
   const session = await requireUser();
+  const [intentEnabledCount, spotEnabledCount] = await Promise.all([
+    prisma.datasetSettings.count({
+      where: {
+        intentCheckEnabled: true,
+      },
+    }),
+    prisma.datasetSettings.count({
+      where: {
+        spotCheckEnabled: true,
+      },
+    }),
+  ]);
 
   const links = [
     session.user.roles.includes(RoleName.ADMIN)
@@ -19,10 +32,10 @@ export default async function PortalLayout({
     session.user.roles.includes(RoleName.REVIEWER)
       ? { href: "/reviewer/queue", label: "Review queue", icon: SearchCheck }
       : null,
-    session.user.roles.includes(RoleName.INTENT_CHECKER)
+    session.user.roles.includes(RoleName.INTENT_CHECKER) && intentEnabledCount > 0
       ? { href: "/intent-checker/queue", label: "Intent queue", icon: Users }
       : null,
-    session.user.roles.includes(RoleName.SPOT_CHECKER)
+    session.user.roles.includes(RoleName.SPOT_CHECKER) && spotEnabledCount > 0
       ? { href: "/spot-checker/queue", label: "Spot checks", icon: ShieldAlert }
       : null,
   ].filter(Boolean) as Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }> }>;

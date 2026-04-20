@@ -178,11 +178,14 @@ model DatasetSettings {
   id                              String   @id @default(cuid())
   datasetId                       String   @unique
   reviewInstructions              String
+  reviewQuestions                 String?
   requiredReviews                 Int      @default(2)
-  requiredIntentChecks            Int      @default(1)
+  intentCheckEnabled              Boolean  @default(false)
+  requiredIntentChecks            Int      @default(0)
+  spotCheckEnabled                Boolean  @default(false)
   randomSpotCheckPercentage       Int      @default(0)
-  lowConfidenceTriggersSpotCheck  Boolean  @default(true)
-  mismatchTriggersSpotCheck       Boolean  @default(true)
+  lowConfidenceTriggersSpotCheck  Boolean  @default(false)
+  mismatchTriggersSpotCheck       Boolean  @default(false)
   extraSafetyFactors              String?
   optionalSafetyFactorsNote       String?
   createdAt                       DateTime @default(now())

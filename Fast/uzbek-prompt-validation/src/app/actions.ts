@@ -22,15 +22,18 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import {
-  DEFAULT_EXTRA_FACTOR_LABELS,
+  ACTIVE_ASSIGNMENT_STATUSES,
   DEFAULT_REVIEW_INSTRUCTIONS,
-  ExtraFactorDefinition,
+  DEFAULT_REVIEW_QUESTIONS,
+  isActiveAssignmentStatus,
+  parseReviewQuestionLines,
+  resolveReviewQuestions,
 } from "@/lib/constants";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/rbac";
 import { addAuditLog, assignPromptToUser, autoAssignPrompts, recomputePromptState } from "@/lib/workflow-service";
+import { getCurrentReviewPrompt } from "@/lib/workflow-rules";
 import { parsePromptWorkbook } from "@/lib/xlsx";
-import { slugifyLabel } from "@/lib/utils";
 
 function withMessage(path: string, key: "notice" | "error", message: string) {
   const url = new URL(path, "http://local");
@@ -62,30 +65,54 @@ async function ensureRoleRecords() {
   );
 }
 
-function parseExtraFactorDefinitions(input: string) {
-  const labels = input
-    .split(/\r?\n/)
-    .map((label) => label.trim())
-    .filter(Boolean);
-
-  const uniqueLabels = [...new Set(labels)];
-
-  const fallback = DEFAULT_EXTRA_FACTOR_LABELS.map((label) => ({
-    key: slugifyLabel(label),
-    label,
-  }));
-
-  if (uniqueLabels.length === 0) {
-    return fallback;
-  }
-
-  return uniqueLabels.map((label) => ({
-    key: slugifyLabel(label),
-    label,
-  })) satisfies ExtraFactorDefinition[];
-}
-
 const emailSchema = z.string().email();
+const yesNoSchema = z.enum(["yes", "no"]);
+
+function mapAnswerToLegacyReviewFields(questionAnswers: Record<string, string>) {
+  const intentPreserved = questionAnswers.intent_preserved;
+  const harmCategoryPreserved = questionAnswers.harm_category_preserved;
+  const strengthPreserved = questionAnswers.strength_preserved;
+  const meaningClarityConfirmed = questionAnswers.meaning_clarity_confirmed;
+  const naturalnessConfirmed = questionAnswers.naturalness_confirmed;
+  const meaningPreserved = questionAnswers.meaning_preserved;
+
+  return {
+    intentMatchesOriginal:
+      intentPreserved === "yes"
+        ? ReviewIntentMatch.FULLY_MATCHES
+        : intentPreserved === "no"
+          ? ReviewIntentMatch.DOES_NOT_MATCH
+          : ReviewIntentMatch.NOT_SURE,
+    harmCategoryMatches:
+      harmCategoryPreserved === "yes"
+        ? ReviewHarmCategoryMatch.SAME_CATEGORY
+        : harmCategoryPreserved === "no"
+          ? ReviewHarmCategoryMatch.DIFFERENT_CATEGORY
+          : ReviewHarmCategoryMatch.NOT_SURE,
+    strengthOfRequest:
+      strengthPreserved === "yes"
+        ? ReviewStrengthOfRequest.SAME
+        : ReviewStrengthOfRequest.NOT_SURE,
+    meaningClarity:
+      meaningClarityConfirmed === "yes"
+        ? ReviewMeaningClarity.CLEAR
+        : meaningClarityConfirmed === "no"
+          ? ReviewMeaningClarity.UNCLEAR
+          : ReviewMeaningClarity.NOT_SURE,
+    naturalness:
+      naturalnessConfirmed === "yes"
+        ? ReviewNaturalness.NATURAL
+        : naturalnessConfirmed === "no"
+          ? ReviewNaturalness.UNNATURAL
+          : ReviewNaturalness.NOT_SURE,
+    meaningDrift:
+      meaningPreserved === "yes"
+        ? ReviewMeaningDrift.NONE
+        : meaningPreserved === "no"
+          ? ReviewMeaningDrift.CLEAR_DRIFT
+          : ReviewMeaningDrift.NOT_SURE,
+  };
+}
 
 export async function createUserAction(formData: FormData) {
   await requireRole(RoleName.ADMIN);
@@ -236,17 +263,15 @@ export async function importDatasetAction(formData: FormData) {
           settings: {
             create: {
               reviewInstructions: DEFAULT_REVIEW_INSTRUCTIONS,
+              intentCheckEnabled: false,
               requiredReviews: 2,
-              requiredIntentChecks: 1,
-              randomSpotCheckPercentage: 10,
-              lowConfidenceTriggersSpotCheck: true,
-              mismatchTriggersSpotCheck: true,
-              extraSafetyFactors: JSON.stringify(
-                DEFAULT_EXTRA_FACTOR_LABELS.map((label) => ({
-                  key: slugifyLabel(label),
-                  label,
-                })),
-              ),
+              reviewQuestions: JSON.stringify(DEFAULT_REVIEW_QUESTIONS),
+              requiredIntentChecks: 0,
+              spotCheckEnabled: false,
+              randomSpotCheckPercentage: 0,
+              lowConfidenceTriggersSpotCheck: false,
+              mismatchTriggersSpotCheck: false,
+              extraSafetyFactors: JSON.stringify([]),
             },
           },
         },
@@ -263,7 +288,7 @@ export async function importDatasetAction(formData: FormData) {
           notes: row.notes || null,
           status: PromptStatus.PENDING_REVIEW,
           requiredReviews: 2,
-          requiredIntentChecks: 1,
+          requiredIntentChecks: 0,
         })),
       });
 
@@ -295,12 +320,15 @@ export async function updateDatasetSettingsAction(formData: FormData) {
     const datasetId = z.string().min(1).parse(formData.get("datasetId"));
     const reviewInstructions = z.string().min(10).parse(formData.get("reviewInstructions"));
     const requiredReviews = z.coerce.number().int().min(1).max(10).parse(formData.get("requiredReviews"));
+    const reviewQuestions = parseReviewQuestionLines(String(formData.get("reviewQuestions") ?? ""));
+    const intentCheckEnabled = String(formData.get("intentCheckEnabled")) === "on";
     const requiredIntentChecks = z.coerce
       .number()
       .int()
-      .min(1)
+      .min(0)
       .max(10)
       .parse(formData.get("requiredIntentChecks"));
+    const spotCheckEnabled = String(formData.get("spotCheckEnabled")) === "on";
     const randomSpotCheckPercentage = z.coerce
       .number()
       .int()
@@ -309,21 +337,27 @@ export async function updateDatasetSettingsAction(formData: FormData) {
       .parse(formData.get("randomSpotCheckPercentage"));
     const lowConfidenceTriggersSpotCheck = String(formData.get("lowConfidenceTriggersSpotCheck")) === "on";
     const mismatchTriggersSpotCheck = String(formData.get("mismatchTriggersSpotCheck")) === "on";
-    const extraSafetyFactorsText = String(formData.get("extraSafetyFactors") ?? "");
     const optionalSafetyFactorsNote = String(formData.get("optionalSafetyFactorsNote") ?? "").trim() || null;
-    const extraSafetyFactors = parseExtraFactorDefinitions(extraSafetyFactorsText);
+    const nextRequiredIntentChecks = intentCheckEnabled ? Math.max(requiredIntentChecks, 1) : 0;
+    const nextRandomSpotCheckPercentage = spotCheckEnabled ? randomSpotCheckPercentage : 0;
+    const nextLowConfidenceTriggersSpotCheck =
+      spotCheckEnabled && intentCheckEnabled && lowConfidenceTriggersSpotCheck;
+    const nextMismatchTriggersSpotCheck =
+      spotCheckEnabled && intentCheckEnabled && mismatchTriggersSpotCheck;
 
     await prisma.$transaction(async (tx) => {
       await tx.datasetSettings.update({
         where: { datasetId },
         data: {
           reviewInstructions,
+          reviewQuestions: JSON.stringify(reviewQuestions),
           requiredReviews,
-          requiredIntentChecks,
-          randomSpotCheckPercentage,
-          lowConfidenceTriggersSpotCheck,
-          mismatchTriggersSpotCheck,
-          extraSafetyFactors: JSON.stringify(extraSafetyFactors),
+          intentCheckEnabled,
+          requiredIntentChecks: nextRequiredIntentChecks,
+          spotCheckEnabled,
+          randomSpotCheckPercentage: nextRandomSpotCheckPercentage,
+          lowConfidenceTriggersSpotCheck: nextLowConfidenceTriggersSpotCheck,
+          mismatchTriggersSpotCheck: nextMismatchTriggersSpotCheck,
           optionalSafetyFactorsNote,
         },
       });
@@ -335,9 +369,74 @@ export async function updateDatasetSettingsAction(formData: FormData) {
         },
         data: {
           requiredReviews,
-          requiredIntentChecks,
+          requiredIntentChecks: nextRequiredIntentChecks,
+          ...(spotCheckEnabled
+            ? {}
+            : {
+                manualSpotCheckRequested: false,
+                randomSpotCheckSelected: false,
+                spotCheckRequired: false,
+              }),
         },
       });
+
+      if (!intentCheckEnabled) {
+        const activeIntentAssignments = await tx.assignment.findMany({
+          where: {
+            taskType: TaskType.INTENT_CHECK,
+            status: {
+              in: [AssignmentStatus.ASSIGNED, AssignmentStatus.IN_PROGRESS],
+            },
+            prompt: {
+              datasetId,
+            },
+          },
+          select: { id: true },
+        });
+
+        if (activeIntentAssignments.length > 0) {
+          await tx.assignment.updateMany({
+            where: {
+              id: {
+                in: activeIntentAssignments.map((assignment) => assignment.id),
+              },
+            },
+            data: {
+              status: AssignmentStatus.CANCELLED,
+              completedAt: new Date(),
+            },
+          });
+        }
+      }
+
+      if (!spotCheckEnabled) {
+        const activeSpotAssignments = await tx.assignment.findMany({
+          where: {
+            taskType: TaskType.SPOT_CHECK,
+            status: {
+              in: [AssignmentStatus.ASSIGNED, AssignmentStatus.IN_PROGRESS],
+            },
+            prompt: {
+              datasetId,
+            },
+          },
+          select: { id: true },
+        });
+
+        if (activeSpotAssignments.length > 0) {
+          await tx.assignment.updateMany({
+            where: {
+              id: {
+                in: activeSpotAssignments.map((assignment) => assignment.id),
+              },
+            },
+            data: {
+              status: AssignmentStatus.CANCELLED,
+              completedAt: new Date(),
+            },
+          });
+        }
+      }
 
       const prompts = await tx.prompt.findMany({
         where: { datasetId },
@@ -354,14 +453,18 @@ export async function updateDatasetSettingsAction(formData: FormData) {
         action: "dataset_settings_updated",
         metadata: {
           requiredReviews,
-          requiredIntentChecks,
-          randomSpotCheckPercentage,
+          requiredIntentChecks: nextRequiredIntentChecks,
+          intentCheckEnabled,
+          spotCheckEnabled,
+          randomSpotCheckPercentage: nextRandomSpotCheckPercentage,
         },
       });
     });
 
     revalidatePath("/admin/settings");
     revalidatePath("/admin/prompts");
+    revalidatePath("/intent-checker/queue");
+    revalidatePath("/spot-checker/queue");
     redirect(withMessage(returnTo, "notice", "Dataset settings updated."));
   } catch (error) {
     redirect(withMessage(returnTo, "error", normalizeActionError(error)));
@@ -562,25 +665,15 @@ export async function overridePromptStatusAction(formData: FormData) {
 
 export async function submitReviewAction(formData: FormData) {
   const session = await requireRole(RoleName.REVIEWER);
+  const rawAssignmentId = String(formData.get("assignmentId") ?? "");
+  let destinationPath = "/reviewer/queue";
+  let destinationNotice = "Review flow complete.";
 
   try {
-    const assignmentId = z.string().min(1).parse(formData.get("assignmentId"));
+    const assignmentId = z.string().min(1).parse(rawAssignmentId);
     const translationChoice = z.nativeEnum(ReviewTranslationChoice).parse(
       formData.get("translationChoice"),
     );
-    const intentMatchesOriginal = z.nativeEnum(ReviewIntentMatch).parse(
-      formData.get("intentMatchesOriginal"),
-    );
-    const harmCategoryMatches = z.nativeEnum(ReviewHarmCategoryMatch).parse(
-      formData.get("harmCategoryMatches"),
-    );
-    const strengthOfRequest = z.nativeEnum(ReviewStrengthOfRequest).parse(
-      formData.get("strengthOfRequest"),
-    );
-    const meaningClarity = z.nativeEnum(ReviewMeaningClarity).parse(formData.get("meaningClarity"));
-    const naturalness = z.nativeEnum(ReviewNaturalness).parse(formData.get("naturalness"));
-    const meaningDrift = z.nativeEnum(ReviewMeaningDrift).parse(formData.get("meaningDrift"));
-    const finalDecision = z.nativeEnum(ReviewDecision).parse(formData.get("finalDecision"));
     const notes = String(formData.get("notes") ?? "").trim() || null;
 
     await prisma.$transaction(async (tx) => {
@@ -594,6 +687,11 @@ export async function submitReviewAction(formData: FormData) {
                   settings: true,
                 },
               },
+              reviews: {
+                orderBy: {
+                  createdAt: "asc",
+                },
+              },
             },
           },
         },
@@ -603,25 +701,60 @@ export async function submitReviewAction(formData: FormData) {
         !assignment ||
         assignment.userId !== session.user.id ||
         assignment.taskType !== TaskType.REVIEW ||
-        assignment.status === AssignmentStatus.COMPLETED
+        !isActiveAssignmentStatus(assignment.status)
       ) {
         throw new Error("Review assignment not found.");
       }
 
-      const extraFactors = assignment.prompt.dataset.settings?.extraSafetyFactors
-        ? (JSON.parse(assignment.prompt.dataset.settings.extraSafetyFactors) as ExtraFactorDefinition[])
-        : [];
-      const editedUzbekPrompt =
-        translationChoice === ReviewTranslationChoice.KEEP_MT
-          ? assignment.prompt.mtUzbekPrompt.trim()
-          : z.string().min(2).parse(formData.get("editedUzbekPrompt")).trim();
-      const extraFactorAnswers = Object.fromEntries(
-        extraFactors.map((factor) => [
-          factor.key,
-          String(formData.get(`extraFactor:${factor.key}`) ?? ""),
-        ]),
+      const reviewQuestions = resolveReviewQuestions(
+        assignment.prompt.dataset.settings?.reviewQuestions,
+        assignment.prompt.dataset.settings?.extraSafetyFactors,
+      );
+      const currentReviewPrompt = getCurrentReviewPrompt(
+        assignment.prompt.reviews,
+        assignment.prompt.mtUzbekPrompt,
+        assignment.prompt.canonicalUzbekPrompt,
       );
 
+      let editedUzbekPrompt = currentReviewPrompt;
+      let intentMatchesOriginal: ReviewIntentMatch = ReviewIntentMatch.NOT_SURE;
+      let harmCategoryMatches: ReviewHarmCategoryMatch = ReviewHarmCategoryMatch.NOT_SURE;
+      let strengthOfRequest: ReviewStrengthOfRequest = ReviewStrengthOfRequest.NOT_SURE;
+      let meaningClarity: ReviewMeaningClarity = ReviewMeaningClarity.NOT_SURE;
+      let naturalness: ReviewNaturalness = ReviewNaturalness.NOT_SURE;
+      let meaningDrift: ReviewMeaningDrift = ReviewMeaningDrift.NOT_SURE;
+      let finalDecision: ReviewDecision = ReviewDecision.NEEDS_SECOND_REVIEW;
+      let extraFactorAnswers: Record<string, string> = Object.fromEntries(
+        reviewQuestions.map((question) => [question.key, "not_answered"]),
+      );
+
+      if (translationChoice !== ReviewTranslationChoice.NOT_SURE) {
+        const questionSelections = reviewQuestions.map((question) => ({
+          key: question.key,
+          answer: yesNoSchema.parse(formData.get(`reviewQuestion:${question.key}`)),
+        }));
+        const questionAnswers = Object.fromEntries(
+          questionSelections.map((question) => [question.key, question.answer]),
+        );
+
+        editedUzbekPrompt =
+          translationChoice === ReviewTranslationChoice.KEEP_MT
+            ? currentReviewPrompt
+            : z.string().min(2).parse(formData.get("editedUzbekPrompt")).trim();
+        ({
+          intentMatchesOriginal,
+          harmCategoryMatches,
+          strengthOfRequest,
+          meaningClarity,
+          naturalness,
+          meaningDrift,
+        } = mapAnswerToLegacyReviewFields(questionAnswers));
+        finalDecision =
+          translationChoice === ReviewTranslationChoice.KEEP_MT
+            ? ReviewDecision.KEEP
+            : ReviewDecision.REVISE;
+        extraFactorAnswers = questionAnswers;
+      }
       await tx.review.create({
         data: {
           assignmentId: assignment.id,
@@ -662,17 +795,48 @@ export async function submitReviewAction(formData: FormData) {
     });
 
     revalidatePath("/reviewer/queue");
-    redirect(withMessage("/reviewer/queue", "notice", "Review submitted."));
+    const nextAssignment = await prisma.assignment.findFirst({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.REVIEW,
+        status: {
+          in: [...ACTIVE_ASSIGNMENT_STATUSES],
+        },
+      },
+      orderBy: {
+        assignedAt: "asc",
+      },
+    });
+
+    if (nextAssignment) {
+      destinationPath = `/reviewer/tasks/${nextAssignment.id}`;
+      destinationNotice = "";
+    } else {
+      destinationPath = "/reviewer/queue";
+      destinationNotice = "Review flow complete.";
+    }
   } catch (error) {
-    redirect(withMessage("/reviewer/queue", "error", normalizeActionError(error)));
+    const returnPath = rawAssignmentId
+      ? `/reviewer/tasks/${rawAssignmentId}`
+      : "/reviewer/queue";
+    redirect(withMessage(returnPath, "error", normalizeActionError(error)));
   }
+
+  if (destinationNotice) {
+    redirect(withMessage(destinationPath, "notice", destinationNotice));
+  }
+
+  redirect(destinationPath);
 }
 
 export async function submitIntentCheckAction(formData: FormData) {
   const session = await requireRole(RoleName.INTENT_CHECKER);
+  const rawAssignmentId = String(formData.get("assignmentId") ?? "");
+  let destinationPath = "/intent-checker/queue";
+  let destinationNotice = "Intent check submitted.";
 
   try {
-    const assignmentId = z.string().min(1).parse(formData.get("assignmentId"));
+    const assignmentId = z.string().min(1).parse(rawAssignmentId);
     const recoveredIntent = z.string().min(5).parse(formData.get("recoveredIntent"));
     const categoryGuess = String(formData.get("categoryGuess") ?? "").trim() || null;
     const confidence = z.nativeEnum(IntentConfidence).parse(formData.get("confidence"));
@@ -689,7 +853,7 @@ export async function submitIntentCheckAction(formData: FormData) {
         !assignment ||
         assignment.userId !== session.user.id ||
         assignment.taskType !== TaskType.INTENT_CHECK ||
-        assignment.status === AssignmentStatus.COMPLETED
+        !isActiveAssignmentStatus(assignment.status)
       ) {
         throw new Error("Intent-check assignment not found.");
       }
@@ -725,17 +889,45 @@ export async function submitIntentCheckAction(formData: FormData) {
     });
 
     revalidatePath("/intent-checker/queue");
-    redirect(withMessage("/intent-checker/queue", "notice", "Intent check submitted."));
+    const nextAssignment = await prisma.assignment.findFirst({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.INTENT_CHECK,
+        status: {
+          in: [...ACTIVE_ASSIGNMENT_STATUSES],
+        },
+      },
+      orderBy: {
+        assignedAt: "asc",
+      },
+    });
+
+    if (nextAssignment) {
+      destinationPath = `/intent-checker/tasks/${nextAssignment.id}`;
+      destinationNotice = "";
+    }
   } catch (error) {
-    redirect(withMessage("/intent-checker/queue", "error", normalizeActionError(error)));
+    const returnPath = rawAssignmentId
+      ? `/intent-checker/tasks/${rawAssignmentId}`
+      : "/intent-checker/queue";
+    redirect(withMessage(returnPath, "error", normalizeActionError(error)));
   }
+
+  if (destinationNotice) {
+    redirect(withMessage(destinationPath, "notice", destinationNotice));
+  }
+
+  redirect(destinationPath);
 }
 
 export async function submitSpotCheckAction(formData: FormData) {
   const session = await requireRole(RoleName.SPOT_CHECKER);
+  const rawAssignmentId = String(formData.get("assignmentId") ?? "");
+  let destinationPath = "/spot-checker/queue";
+  let destinationNotice = "Spot check submitted.";
 
   try {
-    const assignmentId = z.string().min(1).parse(formData.get("assignmentId"));
+    const assignmentId = z.string().min(1).parse(rawAssignmentId);
     const action = z.nativeEnum(SpotCheckAction).parse(formData.get("action"));
     const notes = String(formData.get("notes") ?? "").trim() || null;
 
@@ -751,7 +943,7 @@ export async function submitSpotCheckAction(formData: FormData) {
         !assignment ||
         assignment.userId !== session.user.id ||
         assignment.taskType !== TaskType.SPOT_CHECK ||
-        assignment.status === AssignmentStatus.COMPLETED
+        !isActiveAssignmentStatus(assignment.status)
       ) {
         throw new Error("Spot-check assignment not found.");
       }
@@ -787,8 +979,33 @@ export async function submitSpotCheckAction(formData: FormData) {
     });
 
     revalidatePath("/spot-checker/queue");
-    redirect(withMessage("/spot-checker/queue", "notice", "Spot check submitted."));
+    const nextAssignment = await prisma.assignment.findFirst({
+      where: {
+        userId: session.user.id,
+        taskType: TaskType.SPOT_CHECK,
+        status: {
+          in: [...ACTIVE_ASSIGNMENT_STATUSES],
+        },
+      },
+      orderBy: {
+        assignedAt: "asc",
+      },
+    });
+
+    if (nextAssignment) {
+      destinationPath = `/spot-checker/tasks/${nextAssignment.id}`;
+      destinationNotice = "";
+    }
   } catch (error) {
-    redirect(withMessage("/spot-checker/queue", "error", normalizeActionError(error)));
+    const returnPath = rawAssignmentId
+      ? `/spot-checker/tasks/${rawAssignmentId}`
+      : "/spot-checker/queue";
+    redirect(withMessage(returnPath, "error", normalizeActionError(error)));
   }
+
+  if (destinationNotice) {
+    redirect(withMessage(destinationPath, "notice", destinationNotice));
+  }
+
+  redirect(destinationPath);
 }

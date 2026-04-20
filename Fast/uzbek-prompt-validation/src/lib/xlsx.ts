@@ -66,6 +66,7 @@ export function parsePromptWorkbook(buffer: ArrayBuffer) {
 
 type ExportDataset = {
   name: string;
+  reviewQuestions: string | null;
   prompts: Array<{
     promptId: string;
     category: string;
@@ -95,6 +96,7 @@ type ExportDataset = {
       meaningDrift: string;
       finalDecision: string;
       notes: string | null;
+      reviewCheckAnswers: string | null;
       createdAt: Date;
     }>;
     intentChecks: Array<{
@@ -120,6 +122,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
   const workbook = XLSX.utils.book_new();
 
   const promptSummary = dataset.prompts.map((prompt) => ({
+    review_questions: dataset.reviewQuestions ?? "",
     prompt_id: prompt.promptId,
     category: prompt.category,
     english_prompt: prompt.englishPrompt,
@@ -152,6 +155,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
       meaning_clarity: review.meaningClarity,
       naturalness: review.naturalness,
       meaning_drift: review.meaningDrift,
+      review_check_answers: review.reviewCheckAnswers ?? "",
       reviewer_decision: review.finalDecision,
       reviewer_notes: review.notes ?? "",
       timestamp: review.createdAt.toISOString(),
@@ -208,6 +212,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
       review_meaning_clarity: review.meaningClarity,
       review_naturalness: review.naturalness,
       review_meaning_drift: review.meaningDrift,
+      review_check_answers: review.reviewCheckAnswers ?? "",
       intent_checker_id: "",
       recovered_intent: "",
       category_guess: "",
@@ -237,6 +242,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
       review_meaning_clarity: "",
       review_naturalness: "",
       review_meaning_drift: "",
+      review_check_answers: "",
       intent_checker_id: check.intentCheckerId,
       recovered_intent: check.recoveredIntent,
       category_guess: check.categoryGuess ?? "",
@@ -266,6 +272,7 @@ export function buildExportWorkbook(dataset: ExportDataset) {
       review_meaning_clarity: "",
       review_naturalness: "",
       review_meaning_drift: "",
+      review_check_answers: "",
       intent_checker_id: "",
       recovered_intent: "",
       category_guess: "",
